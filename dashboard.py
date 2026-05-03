@@ -9,6 +9,7 @@ journal cached for 30 s. No manual intervention needed.
 
 import json
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -99,6 +100,120 @@ def load_research_memo() -> dict:
         return json.loads(MEMO_JSON.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+# ── Agent runner ─────────────────────────────────────────────────────────────
+def _run_agent(mode: str, timeout: int = 300) -> tuple[int, str, str]:
+    """
+    Run `python main.py <mode>` as a subprocess and return (returncode, stdout, stderr).
+    Captures output so it can be displayed in the dashboard.
+    Works both locally and on Streamlit Cloud (where the repo is checked out).
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, "main.py", mode],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(Path(__file__).parent),
+            env={**os.environ},
+        )
+        return result.returncode, result.stdout, result.stderr
+    except subprocess.TimeoutExpired:
+        return -1, "", f"Agent timed out after {timeout}s"
+    except Exception as e:
+        return -1, "", str(e)
+
+
+# ── Sidebar — Control Panel ───────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("## ⚙️ Control Panel")
+    st.caption(f"{'🟡 PAPER' if PAPER_MODE else '🔴 LIVE'} mode active")
+    st.divider()
+
+    # ── Data refresh ──────────────────────────────────────────────────────────
+    st.markdown("**Data**")
+    if st.button("⟳ Refresh All Data", use_container_width=True, help="Clear cache and reload market data, account, and journal"):
+        st.cache_data.clear()
+        st.session_state.next_refresh = time.time() + REFRESH_SEC
+        st.rerun()
+
+    if st.button("⟳ Refresh Market Only", use_container_width=True, help="Re-fetch watchlist prices and indicators"):
+        fetch_snapshot.clear()
+        st.rerun()
+
+    if st.button("⟳ Refresh Account Only", use_container_width=True, help="Re-fetch account balance and positions"):
+        fetch_account.clear()
+        st.rerun()
+
+    st.divider()
+
+    # ── Run agents ────────────────────────────────────────────────────────────
+    st.markdown("**Run Agents**")
+    st.caption("Each button calls `main.py` directly. Output is shown below after completion.")
+
+    run_scan   = st.button("🔍 Run Market Scan",       use_container_width=True,
+                           help="Fetch latest data, get Claude's decision, execute if signal qualifies (test mode — no order placed)")
+    run_test   = st.button("🧪 Run Test (no trade)",   use_container_width=True,
+                           help="Fetch account snapshot only — no market scan, no trade")
+    run_review = st.button("📋 Run Weekly Review",     use_container_width=True,
+                           help="Ask Claude to review the last 7 days of journal entries and write a summary")
+    run_research = st.button("🧠 Run Research Analyst", use_container_width=True,
+                             help="Run the full Sunday research analyst: VIX, sectors, broader scan, earnings calendar, weekly memo")
+
+    st.divider()
+    st.markdown("**Auto-refresh**")
+    auto_refresh = st.toggle("Auto-refresh every 60 s", value=True,
+                             help="Disable while running agents to prevent page interruptions")
+
+    # ── Agent output panel ────────────────────────────────────────────────────
+    if run_test:
+        with st.spinner("Running test scan…"):
+            code, out, err = _run_agent("test", timeout=60)
+        st.markdown("**Test Output**")
+        if code == 0:
+            st.success("Completed successfully")
+            st.code(out or "(no output)", language="json")
+        else:
+            st.error(f"Exit code {code}")
+            st.code(err or out, language="text")
+
+    if run_scan:
+        with st.spinner("Running market scan — Claude is analysing… (up to 2 min)"):
+            code, out, err = _run_agent("full", timeout=180)
+        st.markdown("**Market Scan Output**")
+        if code == 0:
+            st.success("Scan complete — journal updated")
+            st.code(out[-3000:] if len(out) > 3000 else out or "(no output)", language="json")
+            fetch_entries.clear()
+            fetch_account.clear()
+        else:
+            st.error(f"Exit code {code}")
+            st.code((err or out)[-2000:], language="text")
+
+    if run_review:
+        with st.spinner("Running weekly review — Claude is reading the journal… (up to 2 min)"):
+            code, out, err = _run_agent("weekly-review", timeout=180)
+        st.markdown("**Weekly Review Output**")
+        if code == 0:
+            st.success("Review written to journal/weekly_summary.md")
+            st.text_area("Review", value=out[-3000:] if len(out) > 3000 else out or "(no output)",
+                         height=300, disabled=True, label_visibility="collapsed")
+        else:
+            st.error(f"Exit code {code}")
+            st.code((err or out)[-2000:], language="text")
+
+    if run_research:
+        with st.spinner("Running Research Analyst — fetching VIX, sectors, earnings, generating memo… (up to 5 min)"):
+            code, out, err = _run_agent("research-analyst", timeout=360)
+        st.markdown("**Research Analyst Output**")
+        if code == 0:
+            st.success("Memo saved to journal/weekly_research_memo.json")
+            st.code(out[-3000:] if len(out) > 3000 else out or "(no output)", language="json")
+            load_research_memo.clear()
+        else:
+            st.error(f"Exit code {code}")
+            st.code((err or out)[-2000:], language="text")
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _grade_colour(grade: str) -> str:
@@ -792,20 +907,22 @@ st.divider()
 footer_left, footer_right = st.columns([4, 1])
 footer_left.caption(
     f"FlowTrader v1  ·  {'Paper' if PAPER_MODE else 'Live'} trading  ·  "
-    f"Auto-refreshes every {REFRESH_SEC} s"
+    + (f"Auto-refreshes every {REFRESH_SEC} s" if auto_refresh else "Auto-refresh paused — toggle in sidebar to resume")
 )
 countdown_slot = footer_right.empty()
 
 if "next_refresh" not in st.session_state:
     st.session_state.next_refresh = time.time() + REFRESH_SEC
 
-remaining = int(st.session_state.next_refresh - time.time())
-
-if remaining <= 0:
-    st.session_state.next_refresh = time.time() + REFRESH_SEC
-    st.cache_data.clear()
-    st.rerun()
+if auto_refresh:
+    remaining = int(st.session_state.next_refresh - time.time())
+    if remaining <= 0:
+        st.session_state.next_refresh = time.time() + REFRESH_SEC
+        st.cache_data.clear()
+        st.rerun()
+    else:
+        countdown_slot.caption(f"Next refresh in {remaining}s")
+        time.sleep(1)
+        st.rerun()
 else:
-    countdown_slot.caption(f"Next refresh in {remaining}s")
-    time.sleep(1)
-    st.rerun()
+    countdown_slot.caption("Auto-refresh paused")
