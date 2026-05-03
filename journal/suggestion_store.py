@@ -1,3 +1,7 @@
+"""
+Shared JSONL persistence for analyst suggestions.
+Used by both InStrategyAnalyst and OutStrategyAnalyst.
+"""
 # journal/suggestion_store.py
 import json
 import logging
@@ -85,6 +89,8 @@ class SuggestionStore:
         logger.info("CLAUDE.md patched successfully")
 
     def _rewrite(self, records: list[dict]) -> None:
-        with open(self.path, "w", encoding="utf-8") as f:
+        tmp = self.path.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             for record in records:
                 f.write(json.dumps(record) + "\n")
+        tmp.replace(self.path)
