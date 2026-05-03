@@ -440,9 +440,8 @@ with tab_analyst:
             with st.spinner("Running in-strategy analyst..."):
                 try:
                     from agents.analyst_in import InStrategyAnalyst
-                    ids = InStrategyAnalyst().run(days=30)
+                    InStrategyAnalyst().run(days=30)
                     st.cache_data.clear()
-                    st.success(f"Done — {len(ids)} suggestion(s)")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Analyst failed: {e}")
@@ -451,9 +450,8 @@ with tab_analyst:
             with st.spinner("Running out-strategy analyst..."):
                 try:
                     from agents.analyst_out import OutStrategyAnalyst
-                    ids = OutStrategyAnalyst().run(days=30)
+                    OutStrategyAnalyst().run(days=30)
                     st.cache_data.clear()
-                    st.success(f"Done — {len(ids)} suggestion(s)")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Analyst failed: {e}")
@@ -463,10 +461,9 @@ with tab_analyst:
                 try:
                     from agents.analyst_in import InStrategyAnalyst
                     from agents.analyst_out import OutStrategyAnalyst
-                    in_ids = InStrategyAnalyst().run(days=30)
-                    out_ids = OutStrategyAnalyst().run(days=30)
+                    InStrategyAnalyst().run(days=30)
+                    OutStrategyAnalyst().run(days=30)
                     st.cache_data.clear()
-                    st.success(f"Done — {len(in_ids)} in-strategy, {len(out_ids)} out-strategy")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Analyst failed: {e}")
@@ -542,7 +539,6 @@ with tab_analyst:
                                 SuggestionStore.apply_to_claude_md("CLAUDE.md", curr, prop)
                             store.action(s["id"], "approved")
                             st.cache_data.clear()
-                            st.success("CLAUDE.md updated — takes effect next trading session")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Could not apply: {e}")
