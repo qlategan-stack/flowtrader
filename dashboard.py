@@ -102,26 +102,86 @@ def load_research_memo() -> dict:
         return {}
 
 # ── Agent runner ─────────────────────────────────────────────────────────────
-def _run_agent(mode: str, timeout: int = 300) -> tuple[int, str, str]:
+def _stream_agent(mode: str, timeout: int = 300, label: str = "") -> tuple[int, str, str]:
     """
-    Run `python main.py <mode>` as a subprocess and return (returncode, stdout, stderr).
-    Captures output so it can be displayed in the dashboard.
-    Works both locally and on Streamlit Cloud (where the repo is checked out).
+    Run `python main.py <mode>` via Popen and stream stdout line-by-line into
+    three Streamlit placeholder widgets:
+      • a status line   (st.empty → caption)
+      • a progress bar  (st.progress)
+      • a scrolling log (st.empty → code block, last 30 lines)
+
+    Returns (returncode, full_stdout, full_stderr) so callers can inspect output.
     """
+    cwd = str(Path(__file__).parent)
+
+    status_ph = st.empty()
+    bar_ph    = st.progress(0, text=f"Starting {label or mode}…")
+    log_ph    = st.empty()
+
+    stdout_lines: list[str] = []
+    stderr_buf:   list[str] = []
+    start = time.time()
+
+    status_ph.caption(f"⏳ Running `{mode}` — started at {datetime.now().strftime('%H:%M:%S')}")
+
     try:
-        result = subprocess.run(
-            [sys.executable, "main.py", mode],
-            capture_output=True,
+        proc = subprocess.Popen(
+            [sys.executable, "-u", "main.py", mode],  # -u = unbuffered stdout
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
-            cwd=str(Path(__file__).parent),
+            cwd=cwd,
             env={**os.environ},
         )
-        return result.returncode, result.stdout, result.stderr
-    except subprocess.TimeoutExpired:
-        return -1, "", f"Agent timed out after {timeout}s"
-    except Exception as e:
-        return -1, "", str(e)
+    except Exception as exc:
+        bar_ph.empty()
+        status_ph.error(f"Failed to start process: {exc}")
+        return -1, "", str(exc)
+
+    def _refresh_log():
+        tail = stdout_lines[-30:] if stdout_lines else ["(waiting for output…)"]
+        log_ph.code("\n".join(tail), language="text")
+
+    def _update_bar(fraction: float, text: str):
+        bar_ph.progress(min(fraction, 1.0), text=text)
+
+    elapsed = 0.0
+    try:
+        while True:
+            line = proc.stdout.readline()
+            if line:
+                stdout_lines.append(line.rstrip())
+                elapsed = time.time() - start
+                frac = min(elapsed / timeout, 0.95)
+                _update_bar(frac, f"Running… {int(elapsed)}s elapsed")
+                _refresh_log()
+            elif proc.poll() is not None:
+                break
+
+            if time.time() - start > timeout:
+                proc.kill()
+                stderr_buf.append(f"Timed out after {timeout}s")
+                break
+    finally:
+        try:
+            remaining_err = proc.stderr.read()
+            if remaining_err:
+                stderr_buf.append(remaining_err)
+        except Exception:
+            pass
+
+    rc = proc.returncode if proc.returncode is not None else -1
+    elapsed = time.time() - start
+
+    _refresh_log()
+    if rc == 0:
+        bar_ph.progress(1.0, text=f"Done in {int(elapsed)}s")
+        status_ph.success(f"✅ `{mode}` completed in {int(elapsed)}s")
+    else:
+        bar_ph.empty()
+        status_ph.error(f"❌ `{mode}` exited with code {rc} after {int(elapsed)}s")
+
+    return rc, "\n".join(stdout_lines), "\n".join(stderr_buf)
 
 
 # ── Sidebar — Control Panel ───────────────────────────────────────────────────
@@ -167,51 +227,35 @@ with st.sidebar:
 
     # ── Agent output panel ────────────────────────────────────────────────────
     if run_test:
-        with st.spinner("Running test scan…"):
-            code, out, err = _run_agent("test", timeout=60)
-        st.markdown("**Test Output**")
-        if code == 0:
-            st.success("Completed successfully")
-            st.code(out or "(no output)", language="json")
-        else:
-            st.error(f"Exit code {code}")
-            st.code(err or out, language="text")
+        st.markdown("**Test Run**")
+        code, out, err = _stream_agent("test", timeout=60, label="Test scan")
+        if code != 0 and (err or out):
+            st.code((err or out)[-2000:], language="text")
 
     if run_scan:
-        with st.spinner("Running market scan — Claude is analysing… (up to 2 min)"):
-            code, out, err = _run_agent("full", timeout=180)
-        st.markdown("**Market Scan Output**")
+        st.markdown("**Market Scan**")
+        code, out, err = _stream_agent("full", timeout=180, label="Market scan")
         if code == 0:
-            st.success("Scan complete — journal updated")
-            st.code(out[-3000:] if len(out) > 3000 else out or "(no output)", language="json")
             fetch_entries.clear()
             fetch_account.clear()
-        else:
-            st.error(f"Exit code {code}")
+        elif err or out:
             st.code((err or out)[-2000:], language="text")
 
     if run_review:
-        with st.spinner("Running weekly review — Claude is reading the journal… (up to 2 min)"):
-            code, out, err = _run_agent("weekly-review", timeout=180)
-        st.markdown("**Weekly Review Output**")
-        if code == 0:
-            st.success("Review written to journal/weekly_summary.md")
-            st.text_area("Review", value=out[-3000:] if len(out) > 3000 else out or "(no output)",
-                         height=300, disabled=True, label_visibility="collapsed")
-        else:
-            st.error(f"Exit code {code}")
+        st.markdown("**Weekly Review**")
+        code, out, err = _stream_agent("weekly-review", timeout=180, label="Weekly review")
+        if code == 0 and out:
+            with st.expander("Review text", expanded=True):
+                st.text(out[-3000:] if len(out) > 3000 else out)
+        elif err or out:
             st.code((err or out)[-2000:], language="text")
 
     if run_research:
-        with st.spinner("Running Research Analyst — fetching VIX, sectors, earnings, generating memo… (up to 5 min)"):
-            code, out, err = _run_agent("research-analyst", timeout=360)
-        st.markdown("**Research Analyst Output**")
+        st.markdown("**Research Analyst**")
+        code, out, err = _stream_agent("research-analyst", timeout=360, label="Research analyst")
         if code == 0:
-            st.success("Memo saved to journal/weekly_research_memo.json")
-            st.code(out[-3000:] if len(out) > 3000 else out or "(no output)", language="json")
             load_research_memo.clear()
-        else:
-            st.error(f"Exit code {code}")
+        elif err or out:
             st.code((err or out)[-2000:], language="text")
 
 
