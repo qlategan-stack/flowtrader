@@ -59,6 +59,6 @@ alpaca:
 
 # ── NOTIFICATIONS ─────────────────────────────────────────
 notifications:
-  slack_enabled: false    # Set to true after adding SLACK_WEBHOOK_URL secret
+  telegram_enabled: true  # Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env
   daily_summary: true     # Send end-of-day P&L summary
   trade_alerts: true      # Alert on every trade placed

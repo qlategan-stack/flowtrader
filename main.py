@@ -147,8 +147,8 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
     )
 
     # Step 6: Send notification if configured
-    if os.getenv("SLACK_WEBHOOK_URL"):
-        send_slack_notification(decision, execution_result, account)
+    if os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
+        send_telegram_notification(decision, execution_result, account)
 
     result = {
         "status": "COMPLETE",
@@ -185,12 +185,13 @@ def run_weekly_review(config: dict) -> str:
     return review_text
 
 
-def send_slack_notification(decision: dict, execution: dict, account: dict):
-    """Send a Slack notification about the trade (optional)."""
+def send_telegram_notification(decision: dict, execution: dict, account: dict):
+    """Send a Telegram notification about the trade."""
     import requests
 
-    webhook = os.getenv("SLACK_WEBHOOK_URL")
-    if not webhook:
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
         return
 
     action = decision.get("action", "SKIP")
@@ -203,7 +204,7 @@ def send_slack_notification(decision: dict, execution: dict, account: dict):
             f"Action: `{action} {symbol}`\n"
             f"Entry: ${decision.get('entry_price', 0):,.2f} | Stop: ${decision.get('stop_loss', 0):,.2f} | Target: ${decision.get('take_profit', 0):,.2f}\n"
             f"Signal Score: {decision.get('signal_score', 0)}/6 | Confidence: {decision.get('confidence', 'N/A')}\n"
-            f"Account: ${account.get('portfolio_value', 0):,.2f} | Day P&L: ${account.get('day_pl', 0):+,.2f}\n"
+            f"Account: ${account.get('portfolio_value', 0):,.2f} | Day P\\&L: ${account.get('day_pl', 0):+,.2f}\n"
             f"Reason: {execution.get('reason', 'Order placed')}"
         )
     else:
@@ -214,9 +215,10 @@ def send_slack_notification(decision: dict, execution: dict, account: dict):
         )
 
     try:
-        requests.post(webhook, json={"text": message}, timeout=5)
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        requests.post(url, json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}, timeout=5)
     except Exception as e:
-        logger.warning(f"Slack notification failed: {e}")
+        logger.warning(f"Telegram notification failed: {e}")
 
 
 if __name__ == "__main__":
