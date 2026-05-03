@@ -40,7 +40,7 @@ class MarketDataFetcher:
     def __init__(self):
         self.alpaca_key = os.getenv("ALPACA_API_KEY")
         self.alpaca_secret = os.getenv("ALPACA_SECRET_KEY")
-        self.alpha_vantage_key = os.getenv("ALPHA_VANTAGE_KEY")
+        self.alpha_vantage_key = os.getenv("ALPHAVANTAGE_API_KEY")
         self.paper = os.getenv("PAPER_TRADING", "true").lower() == "true"
 
         if ALPACA_AVAILABLE and self.alpaca_key:
