@@ -125,7 +125,13 @@ jobs:
     name: Daily Analyst Review
     runs-on: ubuntu-latest
     # Only run on the 17:30 EST cron, not the trading-hours crons
-    if: github.event_name == 'schedule' && contains(github.event.schedule, '30 21')
+    if: >-
+      (github.event_name == 'schedule' && contains(github.event.schedule, '30 21')) ||
+      (github.event_name == 'workflow_dispatch' && (
+        github.event.inputs.mode == 'analyst-in' ||
+        github.event.inputs.mode == 'analyst-out' ||
+        github.event.inputs.mode == 'analyst-full'
+      ))
 
     steps:
       - name: Checkout repository
@@ -145,6 +151,8 @@ jobs:
       - name: Create required directories
         run: mkdir -p journal
 
+      # This job reads trades.jsonl (written by the trade job) but does NOT
+      # modify it. The cache save below only adds suggestion files.
       - name: Restore journal cache
         uses: actions/cache@v4
         with:
@@ -158,7 +166,10 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main.py analyst-full
+        run: |
+          MODE="${{ github.event.inputs.mode || 'analyst-full' }}"
+          echo "Running analyst in mode: $MODE"
+          python main.py $MODE
 
       - name: Upload suggestion artifacts
         uses: actions/upload-artifact@v4
