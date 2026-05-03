@@ -27,7 +27,7 @@ class SuggestionStore:
         if not self.path.exists():
             return []
         records = []
-        with open(self.path, encoding="utf-8") as f:
+        with self.path.open(encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:
@@ -44,7 +44,7 @@ class SuggestionStore:
         return None
 
     def append(self, suggestion: dict) -> None:
-        with open(self.path, "a", encoding="utf-8") as f:
+        with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(suggestion) + "\n")
 
     def upsert(self, suggestion: dict) -> str:
@@ -90,7 +90,7 @@ class SuggestionStore:
 
     def _rewrite(self, records: list[dict]) -> None:
         tmp = self.path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
+        with tmp.open("w", encoding="utf-8") as f:
             for record in records:
                 f.write(json.dumps(record) + "\n")
         tmp.replace(self.path)
