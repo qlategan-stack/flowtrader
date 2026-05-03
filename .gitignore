@@ -26,6 +26,9 @@ env/
 # Logs and journals (kept locally, uploaded as GitHub artifacts)
 journal/bot.log
 
+# Dashboard — commit sample_data.json but not live data.json (contains account info)
+docs/data.json
+
 # OS
 .DS_Store
 Thumbs.db
