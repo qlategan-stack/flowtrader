@@ -17,6 +17,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+Path("journal").mkdir(exist_ok=True)
+
 # ── Logging setup ──────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
