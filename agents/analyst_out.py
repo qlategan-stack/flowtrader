@@ -143,7 +143,8 @@ Return ONLY the JSON array. No preamble, no explanation outside the JSON."""
             return []
 
         try:
-            claude_md = Path(self.claude_md_path).read_text(encoding="utf-8")
+            with open(self.claude_md_path, encoding="utf-8") as f:
+                claude_md = f.read()
         except FileNotFoundError:
             logger.error(f"CLAUDE.md not found at {self.claude_md_path}")
             return []
