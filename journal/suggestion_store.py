@@ -72,6 +72,8 @@ class SuggestionStore:
         return True
 
     def action(self, suggestion_id: str, action: str) -> bool:
+        # actioned_by stores the action verb ("approved"/"archived"/"cancelled"),
+        # not a user identity — the dashboard is the only caller in this system.
         return self.update(suggestion_id, {
             "status": action,
             "actioned_at": datetime.now(timezone.utc).isoformat(),

@@ -110,3 +110,14 @@ def test_parse_suggestions_returns_empty_on_invalid_json(tmp_path):
     analyst, _ = _make_analyst(store_path)
     result = analyst._parse_suggestions("This is not JSON at all.")
     assert result == []
+
+
+def test_run_returns_empty_list_when_claude_md_missing(tmp_path):
+    store_path = tmp_path / "suggestions_in.jsonl"
+    analyst, mock_client = _make_analyst(store_path)
+    # Use a path that definitely doesn't exist
+    analyst.claude_md_path = str(tmp_path / "nonexistent_CLAUDE.md")
+    with patch.object(analyst, "_load_journal", return_value=SAMPLE_JOURNAL_ENTRIES):
+        ids = analyst.run(days=30)
+    assert ids == []
+    mock_client.messages.create.assert_not_called()

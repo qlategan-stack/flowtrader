@@ -125,7 +125,7 @@ Return ONLY the JSON array. No preamble, no explanation outside the JSON."""
             logger.error(f"CLAUDE.md not found at {self.claude_md_path}")
             return []
 
-        prompt = self._build_prompt(entries, claude_md)
+        prompt = self._build_prompt(entries, claude_md, days)
         raw = self._call_claude(prompt)
         suggestions = self._parse_suggestions(raw)
 
@@ -149,11 +149,11 @@ Return ONLY the JSON array. No preamble, no explanation outside the JSON."""
         from journal.logger import TradeJournal
         return TradeJournal().get_entries(days=days)
 
-    def _build_prompt(self, entries: list[dict], claude_md: str) -> str:
+    def _build_prompt(self, entries: list[dict], claude_md: str, days: int) -> str:
         return f"""CURRENT CLAUDE.MD RULES:
 {claude_md}
 
-JOURNAL ENTRIES ({len(entries)} entries, last 30 days):
+JOURNAL ENTRIES ({len(entries)} entries, last {days} days):
 {json.dumps(entries, indent=2)}
 
 Analyze this data and return 1-3 high-impact improvement suggestions as a JSON array."""
@@ -162,7 +162,7 @@ Analyze this data and return 1-3 high-impact improvement suggestions as a JSON a
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=3000,
+                max_tokens=4000,
                 system=self.SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
             )
