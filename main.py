@@ -231,6 +231,12 @@ if __name__ == "__main__":
     if mode == "weekly-review":
         review = run_weekly_review(config)
         print(review)
+    elif mode == "research-analyst":
+        from agents.researcher import ResearchAnalyst
+        watchlist = config.get("watchlist", {}).get("equities", [])
+        analyst = ResearchAnalyst()
+        result = analyst.run_full_analysis(current_watchlist=watchlist)
+        print(json.dumps(result, indent=2))
     elif mode == "test":
         # Quick test — just fetch data and log, no trades
         fetcher = MarketDataFetcher()
