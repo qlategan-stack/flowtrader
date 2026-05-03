@@ -185,6 +185,57 @@ def run_weekly_review(config: dict) -> str:
     return review_text
 
 
+def run_analyst_in(config: dict) -> list[str]:
+    """Run the in-strategy analyst and return generated suggestion IDs."""
+    from agents.analyst_in import InStrategyAnalyst
+    logger.info("Running in-strategy analyst...")
+    analyst = InStrategyAnalyst()
+    ids = analyst.run(days=30)
+    logger.info(f"In-strategy analyst complete: {len(ids)} suggestion(s)")
+    return ids
+
+
+def run_analyst_out(config: dict) -> list[str]:
+    """Run the out-of-strategy analyst and return generated suggestion IDs."""
+    from agents.analyst_out import OutStrategyAnalyst
+    logger.info("Running out-of-strategy analyst...")
+    analyst = OutStrategyAnalyst()
+    ids = analyst.run(days=30)
+    logger.info(f"Out-strategy analyst complete: {len(ids)} suggestion(s)")
+    return ids
+
+
+def run_analyst_full(config: dict) -> dict:
+    """Run both analysts sequentially and send Telegram notification if configured."""
+    in_ids = run_analyst_in(config)
+    out_ids = run_analyst_out(config)
+    result = {"in_strategy": len(in_ids), "out_strategy": len(out_ids)}
+    if os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
+        _send_analyst_telegram_notification(len(in_ids), len(out_ids))
+    return result
+
+
+def _send_analyst_telegram_notification(in_count: int, out_count: int):
+    """Send Telegram notification summarising the analyst run."""
+    import requests
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    message = (
+        f"*FlowTrader Analyst* — Daily Review Complete 🧠\n"
+        f"In\\-Strategy: {in_count} suggestion(s)\n"
+        f"Out\\-Strategy: {out_count} suggestion(s)\n"
+        f"→ Review on the dashboard"
+    )
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": message, "parse_mode": "MarkdownV2"},
+            timeout=5,
+        )
+    except Exception as e:
+        logger.warning(f"Analyst Telegram notification failed: {e}")
+
+
 def send_telegram_notification(decision: dict, execution: dict, account: dict):
     """Send a Telegram notification about the trade."""
     import requests
@@ -237,6 +288,19 @@ if __name__ == "__main__":
         account = fetcher.get_account_snapshot()
         print("Account snapshot:")
         print(json.dumps(account, indent=2))
+
+    elif mode == "analyst-in":
+        result = run_analyst_in(config)
+        print(json.dumps({"status": "complete", "suggestions_generated": len(result)}))
+
+    elif mode == "analyst-out":
+        result = run_analyst_out(config)
+        print(json.dumps({"status": "complete", "suggestions_generated": len(result)}))
+
+    elif mode == "analyst-full":
+        result = run_analyst_full(config)
+        print(json.dumps({"status": "complete", **result}))
+
     else:
         # Check market hours
         is_open, reason = is_market_hours(config)
