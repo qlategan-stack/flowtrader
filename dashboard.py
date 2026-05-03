@@ -73,6 +73,16 @@ def fetch_snapshot(watchlist: tuple):
 def fetch_entries(days: int):
     return _journal().get_entries(days=days)
 
+@st.cache_data(ttl=30)
+def fetch_suggestions(type_filter: str) -> list[dict]:
+    from journal.suggestion_store import SuggestionStore
+    results = []
+    if type_filter in ("both", "in_strategy"):
+        results.extend(SuggestionStore(Path("journal/suggestions_in.jsonl")).load_all())
+    if type_filter in ("both", "out_strategy"):
+        results.extend(SuggestionStore(Path("journal/suggestions_out.jsonl")).load_all())
+    return sorted(results, key=lambda x: x.get("generated_at", ""), reverse=True)
+
 # ── Header ────────────────────────────────────────────────────────────────────
 now_str = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
 h1, h2, h3 = st.columns([5, 2, 1])
@@ -85,7 +95,9 @@ if h3.button("⟳ Refresh", use_container_width=True):
 st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_market, tab_account, tab_journal = st.tabs(["🔍 Market", "💼 Account", "📓 Journal"])
+tab_market, tab_account, tab_journal, tab_analyst = st.tabs(
+    ["🔍 Market", "💼 Account", "📓 Journal", "🧠 Analyst"]
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -395,6 +407,168 @@ with tab_journal:
             st.markdown("**Journal Entry**")
             st.text_area("journal", value=sel.get("journal_entry", ""),
                          height=140, disabled=True, label_visibility="collapsed")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — ANALYST
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab_analyst:
+    st.subheader("🧠 Trading Analyst — Suggested Improvements")
+
+    # ── Controls ─────────────────────────────────────────────────────────────
+    ctrl1, ctrl2 = st.columns([3, 2])
+    with ctrl1:
+        status_filter = st.radio(
+            "Status", ["pending", "approved", "archived", "cancelled"],
+            horizontal=True, index=0,
+        )
+    with ctrl2:
+        type_filter = st.radio(
+            "View", ["both", "in_strategy", "out_strategy"],
+            horizontal=True, index=0,
+            format_func=lambda v: {
+                "both": "Both",
+                "in_strategy": "In-Strategy",
+                "out_strategy": "Out-Strategy",
+            }[v],
+        )
+
+    # ── Run Now buttons ───────────────────────────────────────────────────────
+    run1, run2, run3 = st.columns(3)
+    with run1:
+        if st.button("▶ Run In-Strategy", use_container_width=True):
+            with st.spinner("Running in-strategy analyst..."):
+                try:
+                    from agents.analyst_in import InStrategyAnalyst
+                    ids = InStrategyAnalyst().run(days=30)
+                    st.cache_data.clear()
+                    st.success(f"Done — {len(ids)} suggestion(s)")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Analyst failed: {e}")
+    with run2:
+        if st.button("▶ Run Out-Strategy", use_container_width=True):
+            with st.spinner("Running out-strategy analyst..."):
+                try:
+                    from agents.analyst_out import OutStrategyAnalyst
+                    ids = OutStrategyAnalyst().run(days=30)
+                    st.cache_data.clear()
+                    st.success(f"Done — {len(ids)} suggestion(s)")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Analyst failed: {e}")
+    with run3:
+        if st.button("▶ Run Both", use_container_width=True):
+            with st.spinner("Running both analysts..."):
+                try:
+                    from agents.analyst_in import InStrategyAnalyst
+                    from agents.analyst_out import OutStrategyAnalyst
+                    in_ids = InStrategyAnalyst().run(days=30)
+                    out_ids = OutStrategyAnalyst().run(days=30)
+                    st.cache_data.clear()
+                    st.success(f"Done — {len(in_ids)} in-strategy, {len(out_ids)} out-strategy")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Analyst failed: {e}")
+
+    st.divider()
+
+    # ── Load and filter ───────────────────────────────────────────────────────
+    all_suggestions = fetch_suggestions(type_filter)
+    filtered_suggestions = [s for s in all_suggestions if s.get("status") == status_filter]
+    in_suggestions  = [s for s in filtered_suggestions if s.get("type") == "in_strategy"]
+    out_suggestions = [s for s in filtered_suggestions if s.get("type") == "out_strategy"]
+
+    # ── Suggestion card renderer ──────────────────────────────────────────────
+    def _render_suggestion_cards(suggestions: list[dict], store_path: str) -> None:
+        from journal.suggestion_store import SuggestionStore
+
+        if not suggestions:
+            st.info(f"No {status_filter} suggestions.")
+            return
+
+        priority_icon = {"high": "🔴", "medium": "🟡", "low": "🟢"}
+
+        for s in suggestions:
+            icon  = priority_icon.get(s.get("priority", "low"), "⚪")
+            conf  = int(s.get("confidence", 0) * 100)
+
+            st.markdown(
+                f"{icon} **{s.get('priority','').upper()}** &nbsp;·&nbsp; "
+                f"`{s.get('category','')}` &nbsp;·&nbsp; Confidence: **{conf}%**"
+            )
+            st.markdown(f"#### {s.get('title', 'Untitled')}")
+            st.markdown(s.get("analysis", ""))
+
+            # Insight box
+            insight = s.get("insight", {})
+            if insight:
+                with st.expander("💡 Insight — why this change, what it does, what to expect"):
+                    st.markdown(f"**Why now:** {insight.get('why_now', '—')}")
+                    st.markdown(f"**Purpose:** {insight.get('purpose', '—')}")
+                    st.markdown(f"**Expected effect:** {insight.get('expected_effect', '—')}")
+                    st.markdown(f"**Risks:** {insight.get('risks', '—')}")
+
+            # Current vs proposed rule
+            curr = s.get("current_rule")
+            prop = s.get("proposed_rule")
+            if curr or prop:
+                col_c, col_p = st.columns(2)
+                with col_c:
+                    st.markdown("**Current rule:**")
+                    st.code(curr or "(new rule)", language="")
+                with col_p:
+                    st.markdown("**Proposed rule:**")
+                    st.code(prop or "(remove rule)", language="")
+
+            # Supporting data metrics
+            support = {
+                k: v for k, v in (s.get("supporting_data") or {}).items()
+                if v is not None
+            }
+            if support:
+                metric_cols = st.columns(min(len(support), 4))
+                for i, (k, v) in enumerate(list(support.items())[:4]):
+                    metric_cols[i].metric(k.replace("_", " ").title(), v)
+
+            # Action buttons (pending only)
+            if s.get("status") == "pending":
+                act1, act2, act3, _ = st.columns([2, 1, 1, 3])
+                with act1:
+                    if st.button("✅ Approve & Apply", key=f"approve_{s['id']}"):
+                        try:
+                            store = SuggestionStore(Path(store_path))
+                            if curr and prop:
+                                SuggestionStore.apply_to_claude_md("CLAUDE.md", curr, prop)
+                            store.action(s["id"], "approved")
+                            st.cache_data.clear()
+                            st.success("CLAUDE.md updated — takes effect next trading session")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Could not apply: {e}")
+                with act2:
+                    if st.button("📦 Archive", key=f"archive_{s['id']}"):
+                        SuggestionStore(Path(store_path)).action(s["id"], "archived")
+                        st.cache_data.clear()
+                        st.rerun()
+                with act3:
+                    if st.button("❌ Cancel", key=f"cancel_{s['id']}"):
+                        SuggestionStore(Path(store_path)).action(s["id"], "cancelled")
+                        st.cache_data.clear()
+                        st.rerun()
+
+            st.caption(f"Generated: {s.get('generated_at', '—')}")
+            st.divider()
+
+    # ── In-Strategy section ───────────────────────────────────────────────────
+    if type_filter in ("both", "in_strategy"):
+        st.subheader(f"In-Strategy Suggestions — {len(in_suggestions)} {status_filter}")
+        _render_suggestion_cards(in_suggestions, "journal/suggestions_in.jsonl")
+
+    # ── Out-Strategy section ──────────────────────────────────────────────────
+    if type_filter in ("both", "out_strategy"):
+        st.subheader(f"Out-of-Strategy Suggestions — {len(out_suggestions)} {status_filter}")
+        _render_suggestion_cards(out_suggestions, "journal/suggestions_out.jsonl")
 
 
 # ── Continuous auto-refresh ───────────────────────────────────────────────────
