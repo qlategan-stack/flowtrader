@@ -31,6 +31,10 @@ _SECTOR_ETFS = {
     "XLI": "Industrials",
 }
 
+_MIN_JOURNAL_ENTRIES = 10
+_SPY_HISTORY_PERIOD = "30d"
+_SECTOR_HISTORY_PERIOD = "7d"
+
 
 class OutStrategyAnalyst:
 
@@ -138,8 +142,8 @@ Return ONLY the JSON array. No preamble, no explanation outside the JSON."""
         """
         entries = self._load_journal(days)
 
-        if len(entries) < 10:
-            logger.info(f"OutStrategyAnalyst: only {len(entries)} entries — minimum 10 required")
+        if len(entries) < _MIN_JOURNAL_ENTRIES:
+            logger.info(f"OutStrategyAnalyst: only {len(entries)} entries — minimum {_MIN_JOURNAL_ENTRIES} required")
             return []
 
         try:
@@ -152,6 +156,8 @@ Return ONLY the JSON array. No preamble, no explanation outside the JSON."""
         macro = self._fetch_macro_context()
         prompt = self._build_prompt(entries, claude_md, macro, days)
         raw = self._call_claude(prompt)
+        if raw is None:
+            return []
         suggestions = self._parse_suggestions(raw)
 
         result_ids = []
@@ -179,7 +185,7 @@ Return ONLY the JSON array. No preamble, no explanation outside the JSON."""
             vix_close = round(yf.Ticker("^VIX").fast_info["lastPrice"], 2)
             vix_regime = "high" if vix_close > 25 else "elevated" if vix_close > 18 else "low"
 
-            spy_hist = yf.Ticker("SPY").history(period="30d")
+            spy_hist = yf.Ticker("SPY").history(period=_SPY_HISTORY_PERIOD)
             spy_close = round(float(spy_hist["Close"].iloc[-1]), 2)
             spy_ma20 = round(float(spy_hist["Close"].rolling(20).mean().iloc[-1]), 2)
             spy_regime = "above_ma20" if spy_close > spy_ma20 else "below_ma20"
@@ -187,7 +193,7 @@ Return ONLY the JSON array. No preamble, no explanation outside the JSON."""
             sector_perf: dict[str, float] = {}
             for ticker, name in _SECTOR_ETFS.items():
                 try:
-                    hist = yf.Ticker(ticker).history(period="7d")
+                    hist = yf.Ticker(ticker).history(period=_SECTOR_HISTORY_PERIOD)
                     if len(hist) >= 5:
                         perf = (float(hist["Close"].iloc[-1]) / float(hist["Close"].iloc[-5]) - 1) * 100
                         sector_perf[name] = round(perf, 2)
@@ -222,7 +228,7 @@ JOURNAL ENTRIES ({len(entries)} entries, last {days} days):
 
 Analyze this data from a strategic perspective. Return 1-3 high-impact suggestions as a JSON array."""
 
-    def _call_claude(self, prompt: str) -> str:
+    def _call_claude(self, prompt: str) -> str | None:
         try:
             response = self.client.messages.create(
                 model=self.model,
@@ -233,7 +239,7 @@ Analyze this data from a strategic perspective. Return 1-3 high-impact suggestio
             return response.content[0].text
         except Exception as e:
             logger.error(f"OutStrategyAnalyst Claude API error: {e}")
-            return "[]"
+            return None
 
     def _parse_suggestions(self, raw: str) -> list[dict]:
         patterns = [
