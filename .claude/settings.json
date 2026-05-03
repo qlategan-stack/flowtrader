@@ -9,6 +9,14 @@
         "ALPACA_SECRET_KEY": "${ALPACA_SECRET_KEY}",
         "PAPER_TRADING": "true"
       }
+    },
+    "alphavantage": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["alphavantage-mcp"],
+      "env": {
+        "ALPHAVANTAGE_API_KEY": "${ALPHAVANTAGE_API_KEY}"
+      }
     }
   }
 }
