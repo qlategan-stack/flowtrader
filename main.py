@@ -207,8 +207,15 @@ def run_analyst_out(config: dict) -> list[str]:
 
 def run_analyst_full(config: dict) -> dict:
     """Run both analysts sequentially and send Telegram notification if configured."""
-    in_ids = run_analyst_in(config)
-    out_ids = run_analyst_out(config)
+    in_ids, out_ids = [], []
+    try:
+        in_ids = run_analyst_in(config)
+    except Exception as e:
+        logger.error(f"In-strategy analyst failed: {e}")
+    try:
+        out_ids = run_analyst_out(config)
+    except Exception as e:
+        logger.error(f"Out-strategy analyst failed: {e}")
     result = {"in_strategy": len(in_ids), "out_strategy": len(out_ids)}
     if os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
         _send_analyst_telegram_notification(len(in_ids), len(out_ids))
@@ -220,6 +227,8 @@ def _send_analyst_telegram_notification(in_count: int, out_count: int):
     import requests
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return
     message = (
         f"*FlowTrader Analyst* — Daily Review Complete 🧠\n"
         f"In\\-Strategy: {in_count} suggestion(s)\n"
