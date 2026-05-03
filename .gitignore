@@ -1,0 +1,35 @@
+# API keys — NEVER commit these
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+venv/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and journals (kept locally, uploaded as GitHub artifacts)
+journal/bot.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test outputs
+*.tmp
+test_output/

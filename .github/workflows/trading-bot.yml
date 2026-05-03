@@ -1,0 +1,116 @@
+name: FlowTrader — Trading Bot
+
+on:
+  # ── Scheduled runs during US market hours ────────────────────────────────
+  schedule:
+    # Every 30 minutes on weekdays, 09:30 to 14:30 EST
+    # GitHub Actions uses UTC. EST = UTC-5, EDT = UTC-4.
+    # These times cover 09:30–14:30 EST during EDT (UTC-4):
+    - cron: '30 13 * * 1-5'   # 09:30 EST (EDT: 13:30 UTC)
+    - cron: '0 14 * * 1-5'    # 10:00 EST
+    - cron: '30 14 * * 1-5'   # 10:30 EST
+    - cron: '0 15 * * 1-5'    # 11:00 EST
+    - cron: '30 15 * * 1-5'   # 11:30 EST
+    - cron: '0 16 * * 1-5'    # 12:00 EST
+    - cron: '30 16 * * 1-5'   # 12:30 EST
+    - cron: '0 17 * * 1-5'    # 13:00 EST
+    - cron: '30 17 * * 1-5'   # 13:30 EST
+    - cron: '0 18 * * 1-5'    # 14:00 EST
+    - cron: '30 18 * * 1-5'   # 14:30 EST (last scan before time gate)
+
+    # ── Weekly review — every Sunday at 08:00 EST ──────────────────────────
+    - cron: '0 12 * * 0'      # Sunday 08:00 EST = 12:00 UTC
+
+  # ── Manual trigger (for testing) ─────────────────────────────────────────
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run mode'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - test
+          - weekly-review
+
+jobs:
+  trade:
+    name: Trading Session
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout code ─────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python ─────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # ── 3. Install dependencies ──────────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── 4. Create required directories ───────────────────────────────────
+      - name: Create directories
+        run: |
+          mkdir -p journal
+
+      # ── 5. Restore journal from cache ────────────────────────────────────
+      # This preserves journal entries between GitHub Actions runs
+      - name: Restore journal cache
+        uses: actions/cache@v4
+        with:
+          path: journal/
+          key: journal-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            journal-${{ runner.os }}-
+
+      # ── 6. Run the trading bot ────────────────────────────────────────────
+      - name: Run FlowTrader
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ALPHA_VANTAGE_KEY: ${{ secrets.ALPHA_VANTAGE_KEY }}
+          PAPER_TRADING: ${{ secrets.PAPER_TRADING || 'true' }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          LIVE_TRADING_CONFIRMED: ${{ secrets.LIVE_TRADING_CONFIRMED || 'false' }}
+        run: |
+          MODE="${{ github.event.inputs.mode || 'full' }}"
+
+          # Detect if this is a weekly review run (Sunday cron)
+          DAY=$(date +%u)  # 1=Monday, 7=Sunday
+          HOUR=$(date +%H)
+          if [ "$DAY" = "7" ] && [ "$HOUR" = "12" ]; then
+            MODE="weekly-review"
+          fi
+
+          echo "Running FlowTrader in mode: $MODE"
+          python main.py $MODE
+
+      # ── 7. Save journal and logs as artifacts ────────────────────────────
+      - name: Upload journal artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trading-journal-${{ github.run_id }}
+          path: |
+            journal/trades.jsonl
+            journal/bot.log
+            journal/weekly_summary.md
+          retention-days: 90  # Keep 90 days of history
+
+      # ── 8. Save updated journal to cache ─────────────────────────────────
+      - name: Save journal to cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: journal/
+          key: journal-${{ runner.os }}-${{ github.run_id }}

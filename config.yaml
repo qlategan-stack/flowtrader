@@ -1,0 +1,64 @@
+# config.yaml — FlowTrader Configuration
+# Edit this file to adjust your watchlist, risk settings, and API endpoints
+
+# ── TRADING MODE ──────────────────────────────────────────
+paper_trading: true          # ALWAYS start on paper. Change to false only after 90 days.
+live_trading_confirmed: false # Second safety flag — both must be false for paper mode
+
+# ── ACCOUNT RISK SETTINGS ─────────────────────────────────
+risk:
+  max_position_pct: 0.01     # 1% of account per trade
+  max_daily_loss_pct: 0.02   # Stop trading if down 2% on the day
+  max_open_positions: 3      # Never hold more than 3 positions at once
+  min_signal_score: 3        # Minimum signals required to enter (out of 6)
+  reward_to_risk_min: 1.5    # Minimum R:R ratio required
+
+# ── STRATEGY SETTINGS ─────────────────────────────────────
+strategy:
+  rsi_period: 14
+  rsi_oversold: 32            # RSI below this = oversold signal
+  rsi_overbought: 68          # RSI above this = overbought (for shorts later)
+  bollinger_period: 20
+  bollinger_std: 2.0
+  adx_period: 14
+  adx_trend_threshold: 25     # ADX above this = trending, skip mean reversion
+  adx_range_threshold: 20     # ADX below this = ranging, good for mean reversion
+  vwap_deviation_pct: 1.0     # % below VWAP required for signal
+  atr_period: 14
+  atr_stop_multiplier: 0.5    # Stop = entry - (0.5 x ATR)
+  atr_trail_multiplier: 0.25  # Trail stop after partial exit
+
+# ── WATCHLIST ─────────────────────────────────────────────
+watchlist:
+  equities:
+    - NVDA    # NVIDIA — high volume, good mean reversion
+    - AAPL    # Apple — liquid, tight spreads
+    - MSFT    # Microsoft — stable, strong mean reversion
+    - QQQ     # Nasdaq ETF — great for market regime reading
+    - SPY     # S&P 500 ETF — primary benchmark
+    - AMD     # AMD — correlated with NVDA, pairs opportunities
+    - GLD     # Gold ETF — non-correlated, good diversifier
+
+  crypto:
+    - BTC/USDT   # Bitcoin — deepest liquidity
+    - ETH/USDT   # Ethereum — second most liquid
+    - SOL/USDT   # Solana — good volatility for mean reversion
+
+# ── SCHEDULE ──────────────────────────────────────────────
+schedule:
+  market_open_buffer_minutes: 15   # Don't trade first 15 min (volatile)
+  market_close_cutoff_minutes: 5   # Stop new entries 5 min before close
+  research_interval_minutes: 30    # How often to rescan the watchlist
+  crypto_24_7: true                # Crypto runs around the clock
+
+# ── API ENDPOINTS ─────────────────────────────────────────
+alpaca:
+  paper_base_url: "https://paper-api.alpaca.markets"
+  live_base_url: "https://api.alpaca.markets"
+  data_base_url: "https://data.alpaca.markets"
+
+# ── NOTIFICATIONS ─────────────────────────────────────────
+notifications:
+  slack_enabled: false    # Set to true after adding SLACK_WEBHOOK_URL secret
+  daily_summary: true     # Send end-of-day P&L summary
+  trade_alerts: true      # Alert on every trade placed
