@@ -21,6 +21,9 @@ on:
     # ── Weekly review — every Sunday at 08:00 EST ──────────────────────────
     - cron: '0 12 * * 0'      # Sunday 08:00 EST = 12:00 UTC
 
+    # ── Daily analyst run — 17:30 EST (21:30 UTC) weekdays ────────────────
+    - cron: '30 21 * * 1-5'   # 17:30 EST = 21:30 UTC
+
   # ── Manual trigger (for testing) ─────────────────────────────────────────
   workflow_dispatch:
     inputs:
@@ -33,6 +36,9 @@ on:
           - full
           - test
           - weekly-review
+          - analyst-in
+          - analyst-out
+          - analyst-full
 
 jobs:
   trade:
@@ -109,6 +115,62 @@ jobs:
 
       # ── 8. Save updated journal to cache ─────────────────────────────────
       - name: Save journal to cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: journal/
+          key: journal-${{ runner.os }}-${{ github.run_id }}
+
+  analyst:
+    name: Daily Analyst Review
+    runs-on: ubuntu-latest
+    # Only run on the 17:30 EST cron, not the trading-hours crons
+    if: github.event_name == 'schedule' && contains(github.event.schedule, '30 21')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Create required directories
+        run: mkdir -p journal
+
+      - name: Restore journal cache
+        uses: actions/cache@v4
+        with:
+          path: journal/
+          key: journal-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            journal-${{ runner.os }}-
+
+      - name: Run analyst
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py analyst-full
+
+      - name: Upload suggestion artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: analyst-suggestions-${{ github.run_id }}
+          path: |
+            journal/suggestions_in.jsonl
+            journal/suggestions_out.jsonl
+          retention-days: 90
+
+      - name: Save updated journal to cache
         uses: actions/cache/save@v4
         if: always()
         with:
