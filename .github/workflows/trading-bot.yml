@@ -21,6 +21,9 @@ on:
     # ── Weekly review — every Sunday at 08:00 EST ──────────────────────────
     - cron: '0 12 * * 0'      # Sunday 08:00 EST = 12:00 UTC
 
+    # ── Research Analyst — Sunday 18:00 EDT (22:00 UTC) ──────────────────
+    - cron: '0 22 * * 0'      # Sunday 18:00 EDT = 22:00 UTC
+
     # ── Daily analyst run — 17:30 EST (21:30 UTC) weekdays ────────────────
     - cron: '30 21 * * 1-5'   # 17:30 EST = 21:30 UTC
 
@@ -36,6 +39,7 @@ on:
           - full
           - test
           - weekly-review
+          - research-analyst
           - analyst-in
           - analyst-out
           - analyst-full
@@ -86,16 +90,20 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
           PAPER_TRADING: ${{ secrets.PAPER_TRADING || 'true' }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           LIVE_TRADING_CONFIRMED: ${{ secrets.LIVE_TRADING_CONFIRMED || 'false' }}
         run: |
           MODE="${{ github.event.inputs.mode || 'full' }}"
 
-          # Detect if this is a weekly review run (Sunday cron)
-          DAY=$(date +%u)  # 1=Monday, 7=Sunday
-          HOUR=$(date +%H)
+          # Detect Sunday cron runs by UTC hour
+          DAY=$(date +%u)   # 1=Monday … 7=Sunday
+          HOUR=$(date +%H)  # UTC
           if [ "$DAY" = "7" ] && [ "$HOUR" = "12" ]; then
             MODE="weekly-review"
+          fi
+          if [ "$DAY" = "7" ] && [ "$HOUR" = "22" ]; then
+            MODE="research-analyst"
           fi
 
           echo "Running FlowTrader in mode: $MODE"
@@ -111,6 +119,8 @@ jobs:
             journal/trades.jsonl
             journal/bot.log
             journal/weekly_summary.md
+            journal/weekly_research_memo.md
+            journal/weekly_research_memo.json
           retention-days: 90  # Keep 90 days of history
 
       # ── 8. Save updated journal to cache ─────────────────────────────────
