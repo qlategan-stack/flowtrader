@@ -71,7 +71,7 @@ class BybitFetcher:
             logger.error(f"Bybit public connection failed: {e}")
             return  # no point setting up private exchange if public failed
 
-        # Private exchange — testnet or live, for orders & balance only
+        # Private exchange — demo/live, for orders & balance only
         try:
             self.exchange_priv = ccxt.bybit({
                 "apiKey":  self.api_key  or None,
@@ -82,12 +82,17 @@ class BybitFetcher:
                 },
                 "enableRateLimit": True,
             })
+            # Bybit Demo Trading uses api-demo.bybit.com — NOT api-testnet.bybit.com.
+            # CCXT URLs use {hostname} templates; replace them with the demo endpoint.
             if self.testnet:
-                self.exchange_priv.set_sandbox_mode(True)
-            if self._has_private:
+                api_urls = self.exchange_priv.urls.get("api", {})
+                if isinstance(api_urls, dict):
+                    for k in list(api_urls.keys()):
+                        api_urls[k] = "https://api-demo.bybit.com"
+            if self._has_private and not self.testnet:
                 self.exchange_priv.load_markets()
 
-            mode = "TESTNET orders" if self.testnet else "LIVE orders"
+            mode = "DEMO orders" if self.testnet else "LIVE orders"
             key_status = "API key loaded" if self._has_private else "no key — balance/orders unavailable"
             logger.info(f"Bybit private exchange ready ({mode}) — {key_status}")
         except Exception as e:
@@ -207,25 +212,31 @@ class BybitFetcher:
         if not self._has_private:
             return {"error": "No API key — add BYBIT_API_KEY to .env to see balance"}
         try:
-            bal = self.exchange_priv.fetch_balance()
-            usdt_total = float((bal.get("USDT") or {}).get("total", 0))
-            usdt_free  = float((bal.get("USDT") or {}).get("free",  0))
+            # CCXT's fetch_balance calls /v5/asset/coin/query-info first, which is
+            # blocked on Bybit's demo endpoint. Call /v5/account/wallet-balance directly.
+            raw = self.exchange_priv.privateGetV5AccountWalletBalance({"accountType": "UNIFIED"})
+            if int(raw.get("retCode", -1)) != 0:
+                return {"error": raw.get("retMsg", "Unknown Bybit error")}
 
+            coins = (raw.get("result", {}).get("list") or [{}])[0].get("coin", [])
+            usdt_total = usdt_free = 0.0
             positions = []
-            for currency, info in (bal.get("total") or {}).items():
-                if currency == "USDT":
-                    continue
-                amt = float(info) if info else 0
-                if amt > 1e-6:
-                    positions.append({"currency": currency, "amount": round(amt, 8)})
+            for coin in coins:
+                symbol = coin.get("coin", "")
+                total  = float(coin.get("walletBalance", 0) or 0)
+                free   = float(coin.get("availableToWithdraw", 0) or 0)
+                if symbol == "USDT":
+                    usdt_total, usdt_free = total, free
+                elif total > 1e-6:
+                    positions.append({"currency": symbol, "amount": round(total, 8)})
 
             return {
-                "total_usdt":    round(usdt_total, 2),
-                "free_usdt":     round(usdt_free,  2),
+                "total_usdt":     round(usdt_total, 2),
+                "free_usdt":      round(usdt_free,  2),
                 "open_positions": len(positions),
-                "positions":     positions,
-                "exchange":      "bybit",
-                "testnet":       self.testnet,
+                "positions":      positions,
+                "exchange":       "bybit",
+                "demo":           self.testnet,
             }
         except Exception as e:
             logger.error(f"Bybit balance error: {e}")
