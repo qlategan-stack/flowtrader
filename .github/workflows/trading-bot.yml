@@ -110,7 +110,33 @@ jobs:
           echo "Running FlowTrader in mode: $MODE"
           python main.py $MODE
 
-      # ── 7. Save journal and logs as artifacts ────────────────────────────
+      # ── 7. Fetch Bybit balance snapshot ─────────────────────────────────
+      # GitHub Actions has unrestricted internet — no geo-blocking.
+      # Writes journal/bybit_balance.json so the dashboard can read it
+      # without ever calling the Bybit API directly from Streamlit Cloud.
+      - name: Fetch Bybit balance snapshot
+        env:
+          BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
+          BYBIT_SECRET_KEY: ${{ secrets.BYBIT_SECRET_KEY }}
+          BYBIT_TESTNET: ${{ secrets.BYBIT_TESTNET || 'true' }}
+        run: |
+          python - <<'EOF'
+          import sys, json
+          from pathlib import Path
+          from datetime import datetime, timezone
+          sys.path.insert(0, '.')
+          try:
+              from data.crypto_fetcher import BybitFetcher
+              b = BybitFetcher()
+              bal = b.get_balance()
+          except Exception as e:
+              bal = {"error": str(e)}
+          bal["fetched_at"] = datetime.now(timezone.utc).isoformat()
+          Path("journal/bybit_balance.json").write_text(json.dumps(bal, indent=2))
+          print("Bybit balance snapshot:", bal)
+          EOF
+
+      # ── 8. Save journal and logs as artifacts ────────────────────────────
       - name: Upload journal artifacts
         uses: actions/upload-artifact@v4
         if: always()
@@ -122,6 +148,7 @@ jobs:
             journal/weekly_summary.md
             journal/weekly_research_memo.md
             journal/weekly_research_memo.json
+            journal/bybit_balance.json
           retention-days: 90  # Keep 90 days of history
 
       # ── 8. Save updated journal to cache ─────────────────────────────────
