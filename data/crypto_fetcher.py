@@ -54,8 +54,8 @@ class BybitFetcher:
             self._connect()
 
     def _connect(self):
+        # Public exchange — live Bybit, no auth, full symbol set + real prices
         try:
-            # Public exchange always hits live Bybit — full symbol set, real prices
             self.exchange = ccxt.bybit({
                 "options": {
                     "defaultType": "spot",
@@ -65,8 +65,14 @@ class BybitFetcher:
             })
             self.exchange.load_markets()
             self._connected = True
+            logger.info("Bybit public exchange connected (live market data)")
+        except Exception as e:
+            self._connected = False
+            logger.error(f"Bybit public connection failed: {e}")
+            return  # no point setting up private exchange if public failed
 
-            # Private exchange respects testnet flag for orders / balance
+        # Private exchange — testnet or live, for orders & balance only
+        try:
             self.exchange_priv = ccxt.bybit({
                 "apiKey":  self.api_key  or None,
                 "secret":  self.api_secret or None,
@@ -82,11 +88,12 @@ class BybitFetcher:
                 self.exchange_priv.load_markets()
 
             mode = "TESTNET orders" if self.testnet else "LIVE orders"
-            key_status = "API key loaded" if self._has_private else "public data only — add BYBIT_API_KEY for trading"
-            logger.info(f"Bybit connected (live data, {mode}) — {key_status}")
+            key_status = "API key loaded" if self._has_private else "no key — balance/orders unavailable"
+            logger.info(f"Bybit private exchange ready ({mode}) — {key_status}")
         except Exception as e:
-            self._connected = False
-            logger.error(f"Bybit connection failed: {e}")
+            self.exchange_priv = None
+            self._has_private = False
+            logger.warning(f"Bybit private exchange failed (market data unaffected): {e}")
 
     # ── DATA FETCHING ─────────────────────────────────────────────────────────
 
