@@ -45,16 +45,29 @@ class BybitFetcher:
         self.api_key    = os.getenv("BYBIT_API_KEY", "")
         self.api_secret = os.getenv("BYBIT_SECRET_KEY", "")
         self.testnet    = os.getenv("BYBIT_TESTNET", "true").lower() == "true"
-        self.exchange   = None
-        self._connected = False
-        self._has_private = bool(self.api_key and self.api_secret)
+        self.exchange        = None   # live — public market data
+        self.exchange_priv   = None   # testnet (if enabled) — orders & balance
+        self._connected      = False
+        self._has_private    = bool(self.api_key and self.api_secret)
 
         if CCXT_AVAILABLE:
             self._connect()
 
     def _connect(self):
         try:
+            # Public exchange always hits live Bybit — full symbol set, real prices
             self.exchange = ccxt.bybit({
+                "options": {
+                    "defaultType": "spot",
+                    "adjustForTimeDifference": True,
+                },
+                "enableRateLimit": True,
+            })
+            self.exchange.load_markets()
+            self._connected = True
+
+            # Private exchange respects testnet flag for orders / balance
+            self.exchange_priv = ccxt.bybit({
                 "apiKey":  self.api_key  or None,
                 "secret":  self.api_secret or None,
                 "options": {
@@ -64,13 +77,13 @@ class BybitFetcher:
                 "enableRateLimit": True,
             })
             if self.testnet:
-                self.exchange.set_sandbox_mode(True)
+                self.exchange_priv.set_sandbox_mode(True)
+            if self._has_private:
+                self.exchange_priv.load_markets()
 
-            self.exchange.load_markets()
-            self._connected = True
-            mode = "TESTNET" if self.testnet else "LIVE"
+            mode = "TESTNET orders" if self.testnet else "LIVE orders"
             key_status = "API key loaded" if self._has_private else "public data only — add BYBIT_API_KEY for trading"
-            logger.info(f"Bybit connected ({mode}) — {key_status}")
+            logger.info(f"Bybit connected (live data, {mode}) — {key_status}")
         except Exception as e:
             self._connected = False
             logger.error(f"Bybit connection failed: {e}")
@@ -187,7 +200,7 @@ class BybitFetcher:
         if not self._has_private:
             return {"error": "No API key — add BYBIT_API_KEY to .env to see balance"}
         try:
-            bal = self.exchange.fetch_balance()
+            bal = self.exchange_priv.fetch_balance()
             usdt_total = float((bal.get("USDT") or {}).get("total", 0))
             usdt_free  = float((bal.get("USDT") or {}).get("free",  0))
 
@@ -235,12 +248,12 @@ class BybitFetcher:
             base_amount = usdt_amount / current_price
 
             if side.upper() == "BUY":
-                order = self.exchange.create_market_buy_order(symbol, base_amount)
+                order = self.exchange_priv.create_market_buy_order(symbol, base_amount)
                 fill_price = float(order.get("average") or order.get("price") or current_price)
 
                 # Attach stop-loss as a separate trigger order
                 try:
-                    self.exchange.create_order(
+                    self.exchange_priv.create_order(
                         symbol, "limit", "sell", base_amount, stop_loss_price,
                         params={"triggerPrice": str(stop_loss_price), "orderType": "Limit"}
                     )
@@ -262,7 +275,7 @@ class BybitFetcher:
                 }
 
             else:  # SELL
-                order = self.exchange.create_market_sell_order(symbol, base_amount)
+                order = self.exchange_priv.create_market_sell_order(symbol, base_amount)
                 fill_price = float(order.get("average") or order.get("price") or current_price)
                 return {
                     "status":         "SUBMITTED",
