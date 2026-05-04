@@ -60,23 +60,9 @@ class ResearchAnalyst:
 
     def get_vix_level(self) -> dict:
         """Fetch VIX (fear index) — key macro indicator."""
-        if not self.alpha_vantage_key:
-            return {"vix": "unavailable", "interpretation": "API key not set"}
-
         try:
-            url = "https://www.alphavantage.co/query"
-            params = {
-                "function": "GLOBAL_QUOTE",
-                "symbol": "VIX",
-                "apikey": self.alpha_vantage_key
-            }
-            resp = requests.get(url, params=params, timeout=10)
-            data = resp.json()
-            quote = data.get("Global Quote", {})
-            vix = float(quote.get("05. price", 0))
-
-            if vix == 0:
-                return {"vix": "unavailable", "interpretation": "Data not returned"}
+            import yfinance as yf
+            vix = round(yf.Ticker("^VIX").fast_info["lastPrice"], 2)
 
             if vix < 15:
                 interpretation = "LOW — market complacent, good for mean reversion"
@@ -452,7 +438,7 @@ generated_at, valid_until
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=3000,
+                max_tokens=6000,
                 system=(
                     "You are FlowTrader's Research Analyst. You produce structured, "
                     "actionable weekly trading briefs. Be specific and data-driven. "
@@ -612,25 +598,43 @@ generated_at, valid_until
             return
 
         confidence = memo.get("confidence_score", "N/A")
-        regime = memo.get("market_regime", "Unknown")
+        raw_regime = memo.get("market_regime", "Unknown")
+        if isinstance(raw_regime, dict):
+            regime = raw_regime.get("trend_or_range", raw_regime.get("regime", str(raw_regime)))[:80]
+        else:
+            regime = str(raw_regime)[:80]
         reason = memo.get("confidence_reason", "")
 
         opportunities = memo.get("top_opportunities", [])
+        if isinstance(opportunities, dict):
+            opportunities = list(opportunities.values())
         opp_lines = ""
         for opp in opportunities[:3]:
             if isinstance(opp, dict):
-                opp_lines += f"\n  • {opp.get('symbol', '?')} — {opp.get('reason', '')[:80]}"
+                label = opp.get("rationale", opp.get("reason", opp.get("setup_type", "")))[:80]
+                opp_lines += f"\n  • {opp.get('symbol', '?')} — {label}"
             else:
                 opp_lines += f"\n  • {str(opp)[:80]}"
 
         changes = memo.get("watchlist_changes", {})
-        adds    = changes.get("add", [])
-        removes = changes.get("remove", [])
+        if isinstance(changes, dict):
+            raw_adds = changes.get("add", changes.get("symbols_to_add", []))
+            raw_removes = changes.get("remove", changes.get("symbols_to_remove_or_reduce", []))
+            adds    = [a.get("symbol", str(a)) if isinstance(a, dict) else str(a) for a in raw_adds]
+            removes = [r.get("symbol", str(r)) if isinstance(r, dict) else str(r) for r in raw_removes]
+        else:
+            adds, removes = [], []
 
         warnings = memo.get("risk_warnings", [])
-        warn_line = warnings[0] if warnings else "None"
+        if isinstance(warnings, dict):
+            first_val = next(iter(warnings.values()), None)
+            warn_line = (first_val[0] if isinstance(first_val, list) and first_val else first_val) or "None"
+        elif isinstance(warnings, list) and warnings:
+            warn_line = warnings[0]
+        else:
+            warn_line = "None"
         if isinstance(warn_line, dict):
-            warn_line = warn_line.get("warning", str(warn_line))
+            warn_line = warn_line.get("warning", warn_line.get("detail", str(warn_line)))
 
         message = (
             f"*FlowTrader — Weekly Research Brief*\n"

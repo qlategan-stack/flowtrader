@@ -25,13 +25,14 @@ class TradingDecisionAgent:
         self.client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         self.model = "claude-sonnet-4-6"
 
-        # Load the system prompt from CLAUDE.md
         try:
             with open(claude_md_path, "r") as f:
                 self.system_prompt = f.read()
         except FileNotFoundError:
             logger.warning("CLAUDE.md not found. Using default system prompt.")
             self.system_prompt = self._default_system_prompt()
+
+        self.research_memo = self._load_research_memo()
 
     def analyze_market(self, market_snapshot: dict, account_snapshot: dict) -> dict:
         """
@@ -155,6 +156,8 @@ Be honest and specific. Identify real patterns, not generic advice.
 
         all_symbols = snapshot.get("watchlist", [])
 
+        research_ctx = self._build_research_context()
+
         return f"""
 TRADING SESSION — {snapshot.get('timestamp', 'Unknown time')}
 
@@ -164,7 +167,7 @@ ACCOUNT:
 - Open Positions: {account.get('open_positions', 0)}/3
 - Today's P&L: ${account.get('day_pl', 0):+,.2f}
 
-TOP SETUPS RANKED BY SIGNAL SCORE:
+{research_ctx + chr(10) if research_ctx else ""}TOP SETUPS RANKED BY SIGNAL SCORE:
 {json.dumps(top_setups, indent=2)}
 
 FULL WATCHLIST SUMMARY:
@@ -172,10 +175,11 @@ FULL WATCHLIST SUMMARY:
 
 TASK:
 1. Review the top setups against your signal rules and guardrails
-2. Select the BEST single trade to place this session (or SKIP if nothing qualifies)
-3. If multiple qualify, pick highest signal score with lowest risk
-4. Return your decision as the JSON format specified in your rules
-5. Write a detailed journal entry
+2. Weigh them against the weekly research brief above
+3. Select the BEST single trade to place this session (or SKIP if nothing qualifies)
+4. If multiple qualify, pick highest signal score with lowest risk
+5. Return your decision as the JSON format specified in your rules
+6. Write a detailed journal entry
 
 Remember: No trade is better than a bad trade. SKIP freely.
 """
@@ -219,6 +223,90 @@ Remember: No trade is better than a bad trade. SKIP freely.
             "journal_entry": raw_text[:200],
             "parse_error": True
         }
+
+    def _load_research_memo(self) -> dict:
+        from pathlib import Path
+        path = Path("journal/weekly_research_memo.json")
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning(f"Could not load research memo: {e}")
+            return {}
+
+    def _build_research_context(self) -> str:
+        memo = self.research_memo
+        if not memo:
+            return ""
+
+        raw_regime = memo.get("market_regime", "UNKNOWN")
+        if isinstance(raw_regime, dict):
+            regime = raw_regime.get("trend_or_range", str(raw_regime))[:100]
+            mean_rev_active = raw_regime.get("mean_reversion_active", True)
+            sizing_guidance = raw_regime.get("vix_position_sizing_guidance", "")[:120]
+        else:
+            regime = str(raw_regime)[:100]
+            mean_rev_active = "TREND" not in regime.upper()
+            sizing_guidance = ""
+
+        confidence = memo.get("confidence_score", 5)
+
+        opps = memo.get("top_opportunities", [])
+        if isinstance(opps, dict):
+            opps = list(opps.values())
+        opp_syms = [
+            (o.get("symbol", "?") if isinstance(o, dict) else str(o))
+            for o in opps[:3]
+        ]
+
+        wl_changes = memo.get("watchlist_changes", {})
+        if isinstance(wl_changes, dict):
+            avoid_raw = wl_changes.get(
+                "symbols_to_avoid_earnings",
+                wl_changes.get("avoid_earnings", wl_changes.get("avoid", []))
+            )
+        else:
+            avoid_raw = []
+        avoid_syms = [
+            (a.get("symbol", str(a)) if isinstance(a, dict) else str(a))
+            for a in avoid_raw
+        ]
+
+        top_warning = ""
+        warnings = memo.get("risk_warnings", [])
+        if isinstance(warnings, list):
+            for w in warnings:
+                if isinstance(w, dict) and str(w.get("priority", "")).upper() == "HIGH":
+                    top_warning = w.get("warning", w.get("detail", ""))[:150]
+                    break
+        elif isinstance(warnings, dict):
+            first = next(iter(warnings.values()), None)
+            if isinstance(first, list) and first:
+                w = first[0]
+                top_warning = (
+                    w.get("warning", w.get("detail", str(w))) if isinstance(w, dict) else str(w)
+                )[:150]
+
+        lines = [
+            f"WEEKLY RESEARCH BRIEF (confidence {confidence}/10):",
+            f"- Market Regime: {regime}",
+            f"- Mean Reversion Active: {'YES' if mean_rev_active else 'NO — seriously consider SKIP'}",
+        ]
+        if sizing_guidance:
+            lines.append(f"- Position Sizing Guidance: {sizing_guidance}")
+        if opp_syms:
+            lines.append(f"- Flagged Opportunities This Week: {', '.join(opp_syms)}")
+        if avoid_syms:
+            lines.append(f"- AVOID (earnings risk): {', '.join(avoid_syms)}")
+        if top_warning:
+            lines.append(f"- Key Risk Warning: {top_warning}")
+        if confidence <= 3:
+            lines.append("- VERY LOW CONFIDENCE: Only A-grade setups. Halve normal position size.")
+        elif confidence <= 5:
+            lines.append("- MODERATE CONFIDENCE: Be selective. Prefer high-signal setups.")
+
+        return "\n".join(lines)
 
     def _default_system_prompt(self) -> str:
         return """
