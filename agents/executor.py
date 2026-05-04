@@ -1,7 +1,8 @@
 """
 agents/executor.py
 Order execution module. Validates decisions against hard guardrails,
-then submits orders to Alpaca. Never bypasses risk checks.
+then routes orders to Alpaca (equities) or Bybit via CCXT (crypto).
+Never bypasses risk checks.
 """
 
 import os
@@ -11,6 +12,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+def _is_crypto(symbol: str) -> bool:
+    """Crypto symbols contain a slash — e.g. BTC/USDT."""
+    return "/" in str(symbol)
 
 
 class OrderExecutor:
@@ -182,7 +187,23 @@ class OrderExecutor:
                 "attempted_quantity": quantity
             }
 
-        # Submit to Alpaca
+        # ── Route crypto to Bybit ─────────────────────────────────────────────
+        if _is_crypto(symbol):
+            from data.crypto_fetcher import BybitFetcher
+            bybit = BybitFetcher()
+            usdt_budget = account_value * 0.01 / (entry_price - stop_loss) * entry_price if stop_loss < entry_price else 100
+            result = bybit.place_order(
+                symbol=symbol,
+                side=action,
+                usdt_amount=min(usdt_budget, buying_power * 0.9),
+                current_price=entry_price,
+                stop_loss_price=stop_loss,
+                take_profit_price=take_profit,
+            )
+            logger.info(f"Bybit order: {action} {symbol} — {result.get('status')}")
+            return result
+
+        # ── Route equities to Alpaca ──────────────────────────────────────────
         if not self.alpaca_available:
             logger.warning("Alpaca not available. Simulating order.")
             return {
@@ -210,8 +231,7 @@ class OrderExecutor:
             )
 
             order = self.trading_client.submit_order(order_data=order_request)
-
-            logger.info(f"Order placed: {action} {quantity} {symbol} @ ~{entry_price}")
+            logger.info(f"Alpaca order: {action} {quantity} {symbol} @ ~{entry_price}")
 
             return {
                 "status": "FILLED" if str(order.status) in ["filled", "partially_filled"] else "SUBMITTED",
