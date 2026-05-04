@@ -170,16 +170,29 @@ class ResearchAnalyst:
         scan_universe = [
             # Mega cap tech
             "AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA", "AMD",
+            "ORCL", "CRM", "ADBE", "QCOM",
             # Financials
-            "JPM", "BAC", "GS", "MS", "V", "MA",
+            "JPM", "BAC", "GS", "MS", "V", "MA", "BRK-B", "AXP",
             # Healthcare
-            "JNJ", "PFE", "UNH", "ABBV", "MRK",
+            "JNJ", "PFE", "UNH", "ABBV", "MRK", "LLY", "BMY",
             # Consumer
-            "WMT", "COST", "MCD", "NKE", "SBUX",
-            # ETFs
-            "SPY", "QQQ", "IWM", "GLD", "SLV", "TLT",
-            # Crypto proxies
-            "COIN", "MSTR", "RIOT",
+            "WMT", "COST", "MCD", "NKE", "SBUX", "AMZN", "TGT",
+            # Energy
+            "XOM", "CVX", "COP", "SLB", "HAL",
+            # Materials & industrials
+            "FCX", "NEM", "AA", "CLF", "CAT", "DE",
+            # Broad market & sector ETFs
+            "SPY", "QQQ", "IWM", "DIA", "VTI",
+            "XLE", "XLF", "XLK", "XLV", "XLI", "XLY", "XLB",
+            # Commodities ETFs
+            "GLD", "SLV", "USO", "UNG", "DBC", "PDBC",
+            "COPX", "PALL", "WEAT",
+            # Bonds & rates
+            "TLT", "IEF", "SHY", "HYG", "LQD",
+            # Crypto proxies (equity)
+            "COIN", "MSTR", "RIOT", "MARA", "CLSK", "HUT",
+            # Volatility & alternatives
+            "UVXY", "VXX",
         ]
 
         candidates = []

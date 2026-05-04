@@ -31,18 +31,30 @@ strategy:
 # ── WATCHLIST ─────────────────────────────────────────────
 watchlist:
   equities:
+    # Tech
     - NVDA    # NVIDIA — high volume, good mean reversion
     - AAPL    # Apple — liquid, tight spreads
     - MSFT    # Microsoft — stable, strong mean reversion
-    - QQQ     # Nasdaq ETF — great for market regime reading
-    - SPY     # S&P 500 ETF — primary benchmark
     - AMD     # AMD — correlated with NVDA, pairs opportunities
-    - GLD     # Gold ETF — non-correlated, good diversifier
+    - TSLA    # Tesla — high beta, strong mean reversion swings
+    - META    # Meta — liquid mega-cap, vol good for signals
+    # Broad market ETFs
+    - SPY     # S&P 500 ETF — primary benchmark
+    - QQQ     # Nasdaq ETF — market regime reading
+    - IWM     # Russell 2000 ETF — small-cap divergence signal
+    # Commodities & non-correlated
+    - GLD     # Gold ETF — macro hedge, non-correlated
+    - SLV     # Silver ETF — higher beta version of gold
+    - USO     # Oil ETF (WTI crude) — commodity mean reversion
+    - TLT     # 20+ Year Treasury Bond ETF — rate & risk-off signal
 
   crypto:
-    - BTC/USDT   # Bitcoin — deepest liquidity
-    - ETH/USDT   # Ethereum — second most liquid
-    - SOL/USDT   # Solana — good volatility for mean reversion
+    - BTC/USDT    # Bitcoin — deepest liquidity
+    - ETH/USDT    # Ethereum — second most liquid
+    - SOL/USDT    # Solana — good volatility for mean reversion
+    - AVAX/USDT   # Avalanche — alt-L1, high vol mean reversion
+    - LINK/USDT   # Chainlink — oracle token, technical patterns
+    - DOGE/USDT   # Dogecoin — sentiment-driven, high vol
 
 # ── SCHEDULE ──────────────────────────────────────────────
 schedule:
