@@ -82,6 +82,7 @@ class BybitFetcher:
             logger.error(f"Bybit public connection failed (market data will use REST): {e}")
 
         # Private exchange — demo/live, for orders & balance only
+        # load_markets() is best-effort — balance/orders still work without it.
         try:
             self.exchange_priv = ccxt.bybit({
                 "apiKey":  self.api_key  or None,
@@ -94,16 +95,20 @@ class BybitFetcher:
             })
             if self.testnet:
                 self.exchange_priv.set_sandbox_mode(True)  # → api-testnet.bybit.com
-            if self._has_private:
-                self.exchange_priv.load_markets()
-
             mode = "TESTNET orders" if self.testnet else "LIVE orders"
             key_status = "API key loaded" if self._has_private else "no key — balance/orders unavailable"
             logger.info(f"Bybit private exchange ready ({mode}) — {key_status}")
         except Exception as e:
             self.exchange_priv = None
             self._has_private = False
-            logger.warning(f"Bybit private exchange failed (market data unaffected): {e}")
+            self._connect_error = str(e)
+            logger.warning(f"Bybit private exchange init failed: {e}")
+
+        if self.exchange_priv is not None and self._has_private:
+            try:
+                self.exchange_priv.load_markets()
+            except Exception as e:
+                logger.warning(f"Bybit private load_markets failed (continuing): {e}")
 
     # ── DATA FETCHING ─────────────────────────────────────────────────────────
 
