@@ -164,7 +164,7 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
 
     # Step 6: Send notification if configured
     if os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
-        send_telegram_notification(decision, execution_result, account)
+        send_telegram_notification(decision, execution_result, account, market_snapshot)
 
     result = {
         "status": "COMPLETE",
@@ -261,8 +261,28 @@ def _send_analyst_telegram_notification(in_count: int, out_count: int):
         logger.warning(f"Analyst Telegram notification failed: {e}")
 
 
-def send_telegram_notification(decision: dict, execution: dict, account: dict):
-    """Send a Telegram notification about the trade."""
+def _tg_escape(text: str) -> str:
+    """Escape HTML special characters for Telegram HTML parse mode."""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _truncate_reason(text: str, max_chars: int = 400) -> str:
+    """Truncate at the last complete sentence within max_chars."""
+    if not text or len(text) <= max_chars:
+        return text or "—"
+    chunk = text[:max_chars]
+    for sep in (". ", "! ", "? "):
+        idx = chunk.rfind(sep)
+        if idx > max_chars // 2:
+            return chunk[:idx + 1]
+    idx = chunk.rfind(" ")
+    return (chunk[:idx] if idx > 0 else chunk) + "…"
+
+
+def send_telegram_notification(
+    decision: dict, execution: dict, account: dict, market_snapshot: dict = None
+):
+    """Send a Telegram notification. Only fires on a trade or when positions are open."""
     import requests
 
     token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -271,28 +291,91 @@ def send_telegram_notification(decision: dict, execution: dict, account: dict):
         return
 
     action = decision.get("action", "SKIP")
-    symbol = decision.get("symbol", "N/A")
-    status = execution.get("status", "N/A")
+    est = pytz.timezone("America/New_York")
+    time_str = datetime.now(est).strftime("%H:%M EST")
+
+    portfolio = account.get("portfolio_value", 0) or 0
+    day_pl    = account.get("day_pl", 0) or 0
+    pl_sign   = "+" if day_pl >= 0 else ""
+    acct_line = f"💼 <b>${portfolio:,.0f}</b>  ·  Day P&amp;L: <b>{pl_sign}${day_pl:,.2f}</b>"
+
+    positions = account.get("positions", [])
 
     if action in ["BUY", "SELL"]:
-        message = (
-            f"*FlowTrader* — Trade {'Placed ✅' if status == 'SUBMITTED' else 'Rejected ❌'}\n"
-            f"Action: `{action} {symbol}`\n"
-            f"Entry: ${decision.get('entry_price', 0):,.2f} | Stop: ${decision.get('stop_loss', 0):,.2f} | Target: ${decision.get('take_profit', 0):,.2f}\n"
-            f"Signal Score: {decision.get('signal_score', 0)}/6 | Confidence: {decision.get('confidence', 'N/A')}\n"
-            f"Account: ${account.get('portfolio_value', 0):,.2f} | Day P\\&L: ${account.get('day_pl', 0):+,.2f}\n"
-            f"Reason: {execution.get('reason', 'Order placed')}"
-        )
-    else:
-        message = (
-            f"*FlowTrader* — Session Scanned, No Trade 📊\n"
-            f"Top setup score: {decision.get('signal_score', 0)}/6\n"
-            f"Reason: {decision.get('reasoning', '')[:200]}"
+        symbol = decision.get("symbol") or "?"
+        entry  = float(decision.get("entry_price") or 0)
+        stop   = float(decision.get("stop_loss")   or 0)
+        target = float(decision.get("take_profit") or 0)
+        score  = decision.get("signal_score", 0)
+
+        stop_pct   = (stop   - entry) / entry * 100 if entry else 0
+        target_pct = (target - entry) / entry * 100 if entry else 0
+        rr         = abs(target_pct / stop_pct) if stop_pct else 0
+
+        status = execution.get("status", "")
+        icon = "✅" if status in ("SUBMITTED", "FILLED", "SIMULATED") else "❌"
+        status_label = {
+            "SUBMITTED": "Order placed",
+            "FILLED":    "Filled",
+            "SIMULATED": "Paper trade",
+            "REJECTED":  "Rejected",
+            "ERROR":     "Error",
+        }.get(status, status or "Unknown")
+        venue = "Bybit" if "/" in str(symbol) else "Alpaca"
+
+        price_block = (
+            f"<code>"
+            f"Entry   ${entry:>12,.2f}\n"
+            f"Stop    ${stop:>12,.2f}  ({stop_pct:+.1f}%)\n"
+            f"Target  ${target:>12,.2f}  ({target_pct:+.1f}%)\n"
+            f"R:R 1:{rr:.1f}   Score {score}/6"
+            f"</code>"
         )
 
+        lines = [
+            f"{icon} <b>FlowTrader — {action} {_tg_escape(symbol)}</b>",
+            f"<i>{status_label}  ·  {venue}</i>",
+            "",
+            price_block,
+        ]
+        if execution.get("reason"):
+            lines.append(f"⚠️ {_tg_escape(str(execution['reason'])[:120])}")
+        lines += ["", acct_line, f"🕐 {time_str}"]
+
+    elif positions:
+        # No trade this session but positions are open — show their status
+        pos_lines = []
+        for p in positions:
+            sym  = p.get("symbol", "?")
+            qty  = p.get("qty", 0)
+            pl   = p.get("unrealized_pl", 0) or 0
+            plpc = (p.get("unrealized_plpc", 0) or 0) * 100
+            sign = "+" if pl >= 0 else ""
+            pos_lines.append(
+                f"  {_tg_escape(sym):<12} qty {qty:.4g}   {sign}${pl:,.2f} ({sign}{plpc:.1f}%)"
+            )
+
+        lines = [
+            f"📋 <b>FlowTrader — {len(positions)} Position{'s' if len(positions) != 1 else ''} Open</b>",
+            "",
+            "<code>" + "\n".join(pos_lines) + "</code>",
+            "",
+            acct_line,
+            f"🕐 {time_str}",
+        ]
+
+    else:
+        # Nothing traded, nothing open — stay silent
+        return
+
+    message = "\n".join(lines)
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        requests.post(url, json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}, timeout=5)
+        requests.post(
+            url,
+            json={"chat_id": chat_id, "text": message, "parse_mode": "HTML"},
+            timeout=5,
+        )
     except Exception as e:
         logger.warning(f"Telegram notification failed: {e}")
 
