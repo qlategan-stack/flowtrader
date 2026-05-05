@@ -13,6 +13,28 @@ risk:
   min_signal_score: 3        # Minimum signals required to enter (out of 6)
   reward_to_risk_min: 1.5    # Minimum R:R ratio required
 
+# ── RISK PROFILES ─────────────────────────────────────────
+# Active profile is read from journal/risk_profile.json (written by dashboard).
+# high_safety is the default fallback if no profile file is present.
+risk_profiles:
+  high_safety:
+    max_open_positions: 3
+    max_daily_loss_pct: 0.02    # 2% — stop trading for the day
+    max_position_pct: 0.10      # 10% of account per order
+    risk_pct_per_trade: 0.01    # 1% account risk per trade
+    min_signal_score: 3         # needs 3+ signals out of 6
+    max_stop_distance_pct: 0.05 # stop no more than 5% from entry
+    min_order_value: 100        # minimum $100 order
+
+  medium_safety:
+    max_open_positions: 5
+    max_daily_loss_pct: 0.04    # 4% — wider daily loss tolerance
+    max_position_pct: 0.15      # 15% of account per order
+    risk_pct_per_trade: 0.015   # 1.5% account risk per trade
+    min_signal_score: 2         # enters on 2+ signals out of 6
+    max_stop_distance_pct: 0.08 # stop up to 8% from entry
+    min_order_value: 50         # minimum $50 order
+
 # ── STRATEGY SETTINGS ─────────────────────────────────────
 strategy:
   rsi_period: 14

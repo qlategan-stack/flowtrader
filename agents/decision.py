@@ -34,6 +34,11 @@ class TradingDecisionAgent:
 
         self.research_memo = self._load_research_memo()
 
+        from agents.executor import load_risk_profile
+        self._profile_name, self._profile = load_risk_profile()
+        self._min_score = self._profile.get("min_signal_score", 3)
+        logger.info(f"Decision agent using profile '{self._profile_name}' — min_signal_score={self._min_score}")
+
     def analyze_market(self, market_snapshot: dict, account_snapshot: dict) -> dict:
         """
         Send the market snapshot to Claude and get a trading decision back.
@@ -92,7 +97,7 @@ RECENT HEADLINES:
 {json.dumps(symbol_data.get('recent_headlines', [])[:3], indent=2)}
 
 Apply your signal scoring and guardrails. Return your decision as JSON.
-If signal_score < 3 or regime is TRENDING, the answer must be SKIP.
+If signal_score < {self._min_score} or regime is TRENDING, the answer must be SKIP.
 """
 
         try:
@@ -148,23 +153,27 @@ Be honest and specific. Identify real patterns, not generic advice.
     def _build_analysis_prompt(self, snapshot: dict, account: dict) -> str:
         """Build the full market analysis prompt."""
 
-        # Get the top 3 setups (already sorted by score in fetcher)
+        # Include symbols that meet the active profile's min_signal_score threshold
         top_setups = [
             s for s in snapshot.get("watchlist", [])
-            if s.get("setup_quality") not in ["SKIP", "NO_DATA"]
+            if s.get("indicators", {}).get("signal_score", 0) >= self._min_score
+            and s.get("setup_quality") != "NO_DATA"
         ][:3]
 
         all_symbols = snapshot.get("watchlist", [])
 
         research_ctx = self._build_research_context()
 
+        max_pos = self._profile.get("max_open_positions", 3)
         return f"""
 TRADING SESSION — {snapshot.get('timestamp', 'Unknown time')}
+
+RISK PROFILE: {self._profile_name} (min signal score to enter: {self._min_score}/6)
 
 ACCOUNT:
 - Portfolio: ${account.get('portfolio_value', 0):,.2f}
 - Buying Power: ${account.get('buying_power', 0):,.2f}
-- Open Positions: {account.get('open_positions', 0)}/3
+- Open Positions: {account.get('open_positions', 0)}/{max_pos}
 - Today's P&L: ${account.get('day_pl', 0):+,.2f}
 
 {research_ctx + chr(10) if research_ctx else ""}TOP SETUPS RANKED BY SIGNAL SCORE:
@@ -181,7 +190,7 @@ TASK:
 5. Return your decision as the JSON format specified in your rules
 6. Write a detailed journal entry
 
-Remember: No trade is better than a bad trade. SKIP freely.
+Active risk profile requires signal_score >= {self._min_score} to enter. SKIP freely below that threshold.
 """
 
     def _parse_decision(self, raw_text: str) -> dict:
