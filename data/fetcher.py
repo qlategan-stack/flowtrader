@@ -287,49 +287,72 @@ class MarketDataFetcher:
     def build_market_snapshot(self, watchlist: list) -> dict:
         """
         Build the full market snapshot JSON that Claude reads.
-        This is the main output of the data layer.
+        Equity symbols (e.g. NVDA) go via Alpaca; crypto symbols
+        (anything containing "/", e.g. BTC/USDT) go via BybitFetcher.
+        Both venues' results land in the same watchlist with identical
+        schema so the decision agent treats them uniformly.
         """
         est = pytz.timezone("America/New_York")
         now_est = datetime.now(est)
+
+        equity_symbols = [s for s in watchlist if "/" not in str(s)]
+        crypto_symbols = [s for s in watchlist if "/" in str(s)]
 
         snapshot = {
             "timestamp": now_est.isoformat(),
             "market_time_est": now_est.strftime("%H:%M"),
             "trading_day": now_est.strftime("%Y-%m-%d"),
             "account": self.get_account_snapshot(),
+            "crypto_account": self._fetch_crypto_account_snapshot() if crypto_symbols else None,
             "watchlist": []
         }
 
-        for symbol in watchlist:
-            logger.info(f"Fetching data for {symbol}...")
-
+        for symbol in equity_symbols:
+            logger.info(f"Fetching equity data for {symbol}...")
             bars = self.get_bars(symbol, days=60)
             indicators = self.calculate_indicators(bars)
             news = self.get_news(symbol, limit=5)
             sentiment = self.get_sentiment_score(symbol)
 
-            # Add sentiment signal if positive
             if sentiment.get("score", 0) > 0.15:
                 indicators["signal_score"] = indicators.get("signal_score", 0) + 1
                 indicators["signals_fired"] = indicators.get("signals_fired", []) + ["PositiveSentiment"]
 
-            symbol_data = {
+            snapshot["watchlist"].append({
                 "symbol": symbol,
+                "venue": "alpaca",
+                "asset_class": "equity",
                 "indicators": indicators,
                 "news_sentiment": sentiment,
                 "recent_headlines": news,
-                "setup_quality": self._rate_setup(indicators)
-            }
+                "setup_quality": self._rate_setup(indicators),
+            })
 
-            snapshot["watchlist"].append(symbol_data)
+        if crypto_symbols:
+            try:
+                from data.crypto_fetcher import BybitFetcher
+                crypto_results = BybitFetcher().build_crypto_snapshot(crypto_symbols)
+                for item in crypto_results:
+                    item["venue"] = "bybit"
+                    item["asset_class"] = "crypto"
+                    snapshot["watchlist"].append(item)
+            except Exception as e:
+                logger.error(f"Crypto snapshot failed (continuing with equities): {e}")
 
-        # Sort by setup quality (best setups first)
         snapshot["watchlist"].sort(
             key=lambda x: x["indicators"].get("signal_score", 0),
             reverse=True
         )
-
         return snapshot
+
+    def _fetch_crypto_account_snapshot(self) -> dict:
+        """Pull Bybit balance for the decision agent's account context."""
+        try:
+            from data.crypto_fetcher import BybitFetcher
+            return BybitFetcher().get_balance()
+        except Exception as e:
+            logger.warning(f"Crypto account snapshot failed: {e}")
+            return {"error": str(e)}
 
     def _rate_setup(self, indicators: dict) -> str:
         """Rate the quality of a mean reversion setup."""

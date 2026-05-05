@@ -131,12 +131,13 @@ class OrderExecutor:
     def place_order(self, decision: dict, account: dict) -> dict:
         """
         Main order placement function.
-        Validates, calculates size, and submits to Alpaca.
+        Equity orders use the Alpaca account context passed in. Crypto orders
+        switch to the Bybit account context (free_usdt is the buying-power
+        proxy; portfolio_value is the USD-equivalent total) before validating.
         """
 
         action = decision.get("action", "SKIP").upper()
 
-        # Only BUY or SELL actions result in orders
         if action not in ["BUY", "SELL"]:
             return {
                 "status": "SKIPPED",
@@ -149,24 +150,48 @@ class OrderExecutor:
             return {"status": "ERROR", "reason": "No symbol in decision"}
 
         entry_price = float(decision.get("entry_price", 0))
-        stop_loss = float(decision.get("stop_loss", 0))
+        stop_loss   = float(decision.get("stop_loss", 0))
         take_profit = float(decision.get("take_profit", 0))
 
-        account_value = float(account.get("portfolio_value", 10000))
-        buying_power = float(account.get("buying_power", 0))
-        current_positions = int(account.get("open_positions", 0))
-        day_pl = float(account.get("day_pl", 0))
+        is_crypto = _is_crypto(symbol)
 
-        # Calculate position size
-        quantity = self.calculate_quantity(account_value, entry_price, stop_loss)
+        # ── Account context: switch to Bybit's wallet for crypto orders ────
+        if is_crypto:
+            from data.crypto_fetcher import BybitFetcher
+            bybit = BybitFetcher()
+            bybit_bal = bybit.get_balance()
+            if "error" in bybit_bal:
+                return {"status": "ERROR", "reason": f"Bybit balance fetch failed: {bybit_bal['error']}", "symbol": symbol}
+            account_value     = float(bybit_bal.get("account_value", 0))
+            buying_power      = float(bybit_bal.get("free_usdt",     0))
+            current_positions = int(bybit_bal.get("open_positions",  0))
+            day_pl            = 0.0   # Bybit testnet doesn't expose realised day PL yet
+        else:
+            bybit = None
+            account_value     = float(account.get("portfolio_value", 10000))
+            buying_power      = float(account.get("buying_power",    0))
+            current_positions = int(account.get("open_positions",    0))
+            day_pl            = float(account.get("day_pl",          0))
 
-        # Check buying power
-        if quantity * entry_price > buying_power:
-            quantity = int(buying_power * 0.9 / entry_price)
-            if quantity < 1:
-                return {"status": "SKIPPED", "reason": "Insufficient buying power"}
+        # ── Position size + buying-power check ────────────────────────────
+        if is_crypto:
+            # Crypto trades fractional units sized in USDT, not whole shares.
+            # Risk-based sizing: USDT to risk = 1% of account; quantity = budget / entry.
+            risk_usdt = account_value * 0.01
+            stop_distance = max(entry_price - stop_loss, 1e-9) if action == "BUY" else 1e-9
+            usdt_budget = (risk_usdt / stop_distance) * entry_price if stop_distance > 0 else 0
+            usdt_budget = min(usdt_budget, buying_power * 0.9, account_value * 0.10)  # cap at 10% of account
+            if usdt_budget < 10:
+                return {"status": "SKIPPED", "reason": f"USDT budget too small (${usdt_budget:.2f}, min $10)", "symbol": symbol}
+            quantity = usdt_budget / entry_price  # used only for validation
+        else:
+            quantity = self.calculate_quantity(account_value, entry_price, stop_loss)
+            if quantity * entry_price > buying_power:
+                quantity = int(buying_power * 0.9 / entry_price)
+                if quantity < 1:
+                    return {"status": "SKIPPED", "reason": "Insufficient buying power"}
 
-        # Validate the order
+        # ── Validate ─────────────────────────────────────────────────────
         is_valid, reason = self.validate_order(
             symbol=symbol,
             side=action,
@@ -175,7 +200,7 @@ class OrderExecutor:
             stop_loss=stop_loss,
             account_value=account_value,
             current_positions=current_positions,
-            day_pl=day_pl
+            day_pl=day_pl,
         )
 
         if not is_valid:
@@ -184,18 +209,15 @@ class OrderExecutor:
                 "status": "REJECTED",
                 "reason": reason,
                 "symbol": symbol,
-                "attempted_quantity": quantity
+                "attempted_quantity": quantity,
             }
 
-        # ── Route crypto to Bybit ─────────────────────────────────────────────
-        if _is_crypto(symbol):
-            from data.crypto_fetcher import BybitFetcher
-            bybit = BybitFetcher()
-            usdt_budget = account_value * 0.01 / (entry_price - stop_loss) * entry_price if stop_loss < entry_price else 100
+        # ── Place crypto order via Bybit ─────────────────────────────────
+        if is_crypto:
             result = bybit.place_order(
                 symbol=symbol,
                 side=action,
-                usdt_amount=min(usdt_budget, buying_power * 0.9),
+                usdt_amount=usdt_budget,
                 current_price=entry_price,
                 stop_loss_price=stop_loss,
                 take_profit_price=take_profit,

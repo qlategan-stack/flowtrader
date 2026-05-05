@@ -116,9 +116,23 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
             "message": "Trading stopped for the day due to loss limit"
         }
 
-    # Step 2: Build market snapshot
-    watchlist = config.get("watchlist", {}).get("equities", ["SPY", "QQQ"])
-    logger.info(f"Scanning {len(watchlist)} symbols...")
+    # Step 2: Build market snapshot — combine equities (only when US market open)
+    # with crypto (always, since it trades 24/7)
+    watchlist_cfg   = config.get("watchlist", {})
+    equity_symbols  = list(watchlist_cfg.get("equities", []))
+    crypto_symbols  = list(watchlist_cfg.get("crypto", []))
+
+    market_open, market_reason = is_market_hours(config)
+    if not market_open:
+        logger.info(f"Equity market gated off: {market_reason} — scanning crypto only")
+        equity_symbols = []
+
+    watchlist = equity_symbols + crypto_symbols
+    if not watchlist:
+        logger.info("No symbols to scan (equities gated, no crypto configured). Exiting.")
+        return {"status": "NO_WATCHLIST", "message": market_reason}
+
+    logger.info(f"Scanning {len(watchlist)} symbols ({len(equity_symbols)} equity, {len(crypto_symbols)} crypto)...")
 
     market_snapshot = fetcher.build_market_snapshot(watchlist)
 
@@ -319,11 +333,7 @@ if __name__ == "__main__":
         print(json.dumps({"status": "complete", **result}))
 
     else:
-        # Check market hours
-        is_open, reason = is_market_hours(config)
-        if not is_open:
-            logger.info(f"Market not available: {reason}")
-            sys.exit(0)
-
+        # Equity market hours are checked inside run_trading_session — crypto
+        # runs 24/7 so we no longer exit on closed-market.
         result = run_trading_session(config, mode)
         print(json.dumps(result, indent=2))
