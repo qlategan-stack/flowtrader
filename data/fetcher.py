@@ -308,6 +308,10 @@ class MarketDataFetcher:
             "watchlist": []
         }
 
+        from agents.executor import load_risk_profile
+        _, active_profile = load_risk_profile()
+        min_score = active_profile.get("min_signal_score", 3)
+
         for symbol in equity_symbols:
             logger.info(f"Fetching equity data for {symbol}...")
             bars = self.get_bars(symbol, days=60)
@@ -326,7 +330,7 @@ class MarketDataFetcher:
                 "indicators": indicators,
                 "news_sentiment": sentiment,
                 "recent_headlines": news,
-                "setup_quality": self._rate_setup(indicators),
+                "setup_quality": self._rate_setup(indicators, min_score),
             })
 
         if crypto_symbols:
@@ -355,8 +359,8 @@ class MarketDataFetcher:
             logger.warning(f"Crypto account snapshot failed: {e}")
             return {"error": str(e)}
 
-    def _rate_setup(self, indicators: dict) -> str:
-        """Rate the quality of a mean reversion setup."""
+    def _rate_setup(self, indicators: dict, min_score: int = 3) -> str:
+        """Rate the quality of a mean reversion setup relative to the active profile's min_signal_score."""
         if "error" in indicators:
             return "NO_DATA"
 
@@ -365,11 +369,11 @@ class MarketDataFetcher:
 
         if not eligible:
             return "SKIP"
-        elif score >= 5:
+        elif score >= min_score + 2:
             return "A_GRADE"
-        elif score >= 4:
+        elif score >= min_score + 1:
             return "B_GRADE"
-        elif score >= 3:
+        elif score >= min_score:
             return "C_GRADE"
         else:
             return "SKIP"
