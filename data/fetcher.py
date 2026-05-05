@@ -101,7 +101,8 @@ class MarketDataFetcher:
                 symbol_or_symbols=symbol,
                 timeframe=TimeFrame.Day,
                 start=start,
-                end=end
+                end=end,
+                feed="iex",   # IEX feed is available on free Alpaca plans; SIP requires paid
             )
             bars = self.stock_client.get_stock_bars(request)
             df = bars.df
@@ -155,7 +156,7 @@ class MarketDataFetcher:
 
             # VWAP (approximated from daily data)
             typical_price = (high + low + close) / 3
-            vwap = float((typical_price * volume).rolling(20).sum() / volume.rolling(20).sum()).iloc[-1]
+            vwap = float(((typical_price * volume).rolling(20).sum() / volume.rolling(20).sum()).iloc[-1])
 
             current_price = float(close.iloc[-1])
 
