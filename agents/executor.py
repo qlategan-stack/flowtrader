@@ -16,10 +16,21 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-_BOT_ROOT       = Path(__file__).resolve().parent.parent
-_DASHBOARD_ROOT = _BOT_ROOT.parent.parent / "flowtrader-dashboard"
-_PROFILE_FILE   = _DASHBOARD_ROOT / "journal" / "risk_profile.json"
-_CONFIG_FILE    = _BOT_ROOT / "config.yaml"
+_BOT_ROOT    = Path(__file__).resolve().parent.parent
+_CONFIG_FILE = _BOT_ROOT / "config.yaml"
+
+# risk_profile.json search order:
+#   1. journal/ inside the bot's own working directory (GitHub Actions cache, CI)
+#   2. sibling flowtrader-dashboard repo (local dev)
+_LOCAL_PROFILE_FILE     = _BOT_ROOT / "journal" / "risk_profile.json"
+_DASHBOARD_PROFILE_FILE = _BOT_ROOT.parent.parent / "flowtrader-dashboard" / "journal" / "risk_profile.json"
+
+def _find_profile_file() -> Path:
+    if _LOCAL_PROFILE_FILE.exists():
+        return _LOCAL_PROFILE_FILE
+    if _DASHBOARD_PROFILE_FILE.exists():
+        return _DASHBOARD_PROFILE_FILE
+    return _LOCAL_PROFILE_FILE  # return local path so the warning message is useful
 
 _DEFAULT_PROFILE = "high_safety"
 
@@ -42,6 +53,16 @@ _FALLBACK_PROFILES = {
         "max_stop_distance_pct": 0.08,
         "min_order_value":       50,
     },
+    "low_safety": {
+        "max_open_positions":    8,
+        "max_daily_loss_pct":    0.06,
+        "max_position_pct":      0.05,
+        "risk_pct_per_trade":    0.02,
+        "min_signal_score":      1,
+        "max_stop_distance_pct": 0.12,
+        "min_order_value":       25,
+        "always_max_position":   True,
+    },
 }
 
 
@@ -53,11 +74,13 @@ def load_risk_profile() -> tuple[str, dict]:
     Returns (profile_name, profile_dict).
     """
     profile_name = _DEFAULT_PROFILE
+    profile_file = _find_profile_file()
     try:
-        data = json.loads(_PROFILE_FILE.read_text(encoding="utf-8"))
+        data = json.loads(profile_file.read_text(encoding="utf-8"))
         profile_name = data.get("active_profile", _DEFAULT_PROFILE)
+        logger.info(f"Risk profile loaded from {profile_file}: {profile_name}")
     except Exception:
-        logger.warning(f"risk_profile.json not found or unreadable at {_PROFILE_FILE} — defaulting to {_DEFAULT_PROFILE}")
+        logger.warning(f"risk_profile.json not found at {profile_file} — defaulting to {_DEFAULT_PROFILE}")
 
     try:
         import yaml

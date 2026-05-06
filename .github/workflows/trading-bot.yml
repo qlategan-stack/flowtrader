@@ -83,7 +83,23 @@ jobs:
           restore-keys: |
             journal-${{ runner.os }}-
 
-      # ── 6. Run the trading bot ────────────────────────────────────────────
+      # ── 6. Fetch active risk profile from dashboard repo ─────────────────
+      # risk_profile.json lives in flowtrader-dashboard and is written by
+      # the Streamlit dashboard when the user switches profiles. Download it
+      # into journal/ so the bot reads the correct profile on this run.
+      - name: Fetch active risk profile
+        env:
+          DASHBOARD_READ_TOKEN: ${{ secrets.DASHBOARD_READ_TOKEN }}
+        run: |
+          mkdir -p journal
+          curl -sf \
+            -H "Authorization: token $DASHBOARD_READ_TOKEN" \
+            "https://raw.githubusercontent.com/qlategan-stack/flowtrader-dashboard/main/journal/risk_profile.json" \
+            -o journal/risk_profile.json \
+          && echo "Risk profile downloaded: $(cat journal/risk_profile.json)" \
+          || echo "Could not fetch risk_profile.json — using cached or default"
+
+      # ── 7. Run the trading bot ────────────────────────────────────────────
       - name: Run FlowTrader
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
@@ -110,7 +126,7 @@ jobs:
           echo "Running FlowTrader in mode: $MODE"
           python main.py $MODE
 
-      # ── 7. Fetch Bybit balance snapshot ─────────────────────────────────
+      # ── 8. Fetch Bybit balance snapshot ─────────────────────────────────
       # GitHub Actions has unrestricted internet — no geo-blocking.
       # Writes journal/bybit_balance.json so the dashboard can read it
       # without ever calling the Bybit API directly from Streamlit Cloud.
@@ -136,7 +152,7 @@ jobs:
           print("Bybit balance snapshot:", bal)
           EOF
 
-      # ── 8. Save journal and logs as artifacts ────────────────────────────
+      # ── 9. Save journal and logs as artifacts ────────────────────────────
       - name: Upload journal artifacts
         uses: actions/upload-artifact@v4
         if: always()
@@ -151,7 +167,7 @@ jobs:
             journal/bybit_balance.json
           retention-days: 90  # Keep 90 days of history
 
-      # ── 8. Save updated journal to cache ─────────────────────────────────
+      # ── 10. Save updated journal to cache ────────────────────────────────
       - name: Save journal to cache
         uses: actions/cache/save@v4
         if: always()

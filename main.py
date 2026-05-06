@@ -105,11 +105,14 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
     account = fetcher.get_account_snapshot()
     logger.info(f"Account: ${account.get('portfolio_value', 0):,.2f} | Positions: {account.get('open_positions', 0)}/3")
 
-    # Check daily loss limit before doing anything
+    # Check daily loss limit before doing anything (reads from active risk profile)
     day_pl = account.get("day_pl", 0)
     portfolio_value = account.get("portfolio_value", 10000)
-    if day_pl < 0 and abs(day_pl) / portfolio_value >= 0.02:
-        logger.warning(f"Daily loss limit hit: ${day_pl:,.2f} ({abs(day_pl)/portfolio_value:.1%}). Shutting down for today.")
+    from agents.executor import load_risk_profile
+    _profile_name, _profile = load_risk_profile()
+    daily_loss_limit = _profile.get("max_daily_loss_pct", 0.02)
+    if day_pl < 0 and abs(day_pl) / portfolio_value >= daily_loss_limit:
+        logger.warning(f"Daily loss limit hit: ${day_pl:,.2f} ({abs(day_pl)/portfolio_value:.1%} ≥ {daily_loss_limit:.0%}). Shutting down for today.")
         return {
             "status": "DAILY_LIMIT_HIT",
             "day_pl": day_pl,
