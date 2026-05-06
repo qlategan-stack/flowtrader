@@ -188,27 +188,30 @@ class OrderExecutor:
     ) -> int:
         """
         Position size based on profile risk-per-trade rule.
-        Quantity = (Account × Risk%) / (Entry − Stop), capped at max_position_pct.
-        Both constraints apply: max dollar risk per trade AND max position size.
+        If always_max_position is set on the profile, skips the risk-per-share
+        formula and sizes directly at max_position_pct — guaranteed to execute.
+        Otherwise: Quantity = (Account × Risk%) / (Entry − Stop), capped at max_position_pct.
         """
+        if entry_price <= 0:
+            return 0
+
+        max_order_value = account_value * self.profile["max_position_pct"]
+
+        if self.profile.get("always_max_position"):
+            return max(1, int(max_order_value / entry_price))
+
         if risk_pct is None:
             risk_pct = self.profile["risk_pct_per_trade"]
 
-        if entry_price <= stop_loss or entry_price <= 0:
+        if entry_price <= stop_loss:
             return 0
 
-        risk_amount = account_value * risk_pct
         risk_per_share = entry_price - stop_loss
         if risk_per_share <= 0:
             return 0
 
-        quantity = int(risk_amount / risk_per_share)
-
-        # Hard cap: never exceed max_position_pct of account in one trade
-        max_order_value = account_value * self.profile["max_position_pct"]
-        max_by_pct = int(max_order_value / entry_price)
-        quantity = min(quantity, max_by_pct)
-
+        quantity = int((account_value * risk_pct) / risk_per_share)
+        quantity = min(quantity, int(max_order_value / entry_price))
         return max(1, quantity)
 
     def place_order(self, decision: dict, account: dict) -> dict:
@@ -257,10 +260,14 @@ class OrderExecutor:
 
         # ── Position sizing ───────────────────────────────────────────────────
         if is_crypto:
-            risk_usdt     = account_value * p["risk_pct_per_trade"]
-            stop_distance = max(entry_price - stop_loss, 1e-9) if action == "BUY" else 1e-9
-            usdt_budget   = (risk_usdt / stop_distance) * entry_price if stop_distance > 0 else 0
-            usdt_budget   = min(usdt_budget, buying_power * 0.9, account_value * p["max_position_pct"])
+            max_usdt = min(account_value * p["max_position_pct"], buying_power * 0.9)
+            if p.get("always_max_position"):
+                usdt_budget = max_usdt
+            else:
+                risk_usdt     = account_value * p["risk_pct_per_trade"]
+                stop_distance = max(entry_price - stop_loss, 1e-9) if action == "BUY" else 1e-9
+                usdt_budget   = (risk_usdt / stop_distance) * entry_price if stop_distance > 0 else 0
+                usdt_budget   = min(usdt_budget, max_usdt)
             if usdt_budget < p["min_order_value"]:
                 return {"status": "SKIPPED", "reason": f"USDT budget too small (${usdt_budget:.2f}, min ${p['min_order_value']})", "symbol": symbol}
             quantity = usdt_budget / entry_price
