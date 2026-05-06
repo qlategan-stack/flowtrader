@@ -100,6 +100,14 @@ def _is_crypto(symbol: str) -> bool:
     return "/" in str(symbol)
 
 
+# ── Hard absolute cap ─────────────────────────────────────────────────────────
+# No single order may exceed this fraction of total account value, regardless
+# of which risk profile is active.  This is a belt-and-suspenders safety net
+# on top of each profile's max_position_pct — a sanity ceiling that prevents
+# any future profile change from accidentally allowing oversized positions.
+HARD_MAX_POSITION_PCT = 0.10  # 10% of account, absolute ceiling
+
+
 class OrderExecutor:
     """
     Executes trade decisions via Alpaca (equities) or Bybit (crypto).
@@ -185,12 +193,13 @@ class OrderExecutor:
         if current_positions >= max_pos:
             return False, f"Max positions reached ({current_positions}/{max_pos})"
 
-        # 2. Position size check
-        order_value = quantity * entry_price
+        # 2. Position size check — profile cap AND hard absolute ceiling
+        order_value  = quantity * entry_price
         position_pct = order_value / account_value
-        max_pos_pct = p["max_position_pct"]
+        max_pos_pct  = min(p["max_position_pct"], HARD_MAX_POSITION_PCT)
         if position_pct > max_pos_pct:
-            return False, f"Position too large ({position_pct:.1%} of account, max {max_pos_pct:.0%})"
+            cap_reason = "hard cap" if HARD_MAX_POSITION_PCT < p["max_position_pct"] else "profile cap"
+            return False, f"Position too large ({position_pct:.1%} of account, max {max_pos_pct:.0%} — {cap_reason})"
 
         # 3. Minimum order value
         min_val = p["min_order_value"]
@@ -227,7 +236,9 @@ class OrderExecutor:
         if entry_price <= 0:
             return 0
 
-        max_order_value = account_value * self.profile["max_position_pct"]
+        # Apply hard absolute cap on top of profile setting
+        effective_pct   = min(self.profile["max_position_pct"], HARD_MAX_POSITION_PCT)
+        max_order_value = account_value * effective_pct
 
         if self.profile.get("always_max_position"):
             return max(1, int(max_order_value / entry_price))
@@ -291,6 +302,10 @@ class OrderExecutor:
             current_positions = int(account.get("open_positions",    0))
             day_pl            = float(account.get("day_pl",          0))
 
+        # Effective per-order cap: profile setting OR hard absolute ceiling,
+        # whichever is smaller.  Guarantees no order ever exceeds 10% of account.
+        effective_max_pct = min(p["max_position_pct"], HARD_MAX_POSITION_PCT)
+
         # ── Position sizing ───────────────────────────────────────────────────
         if is_exit:
             # Exits use the existing position quantity from the decision
@@ -299,7 +314,7 @@ class OrderExecutor:
             if quantity <= 0:
                 return {"status": "ERROR", "reason": "Exit quantity must be > 0", "symbol": symbol}
         elif is_crypto:
-            max_usdt = min(account_value * p["max_position_pct"], buying_power * 0.9)
+            max_usdt = min(account_value * effective_max_pct, buying_power * 0.9)
             if p.get("always_max_position"):
                 usdt_budget = max_usdt
             else:
@@ -310,12 +325,20 @@ class OrderExecutor:
             if usdt_budget < p["min_order_value"]:
                 return {"status": "SKIPPED", "reason": f"USDT budget too small (${usdt_budget:.2f}, min ${p['min_order_value']})", "symbol": symbol}
             quantity = usdt_budget / entry_price
+            logger.info(
+                f"Crypto sizing — {symbol}: order ${usdt_budget:,.2f} "
+                f"({usdt_budget/account_value:.2%} of account, profile cap {p['max_position_pct']:.0%}, hard cap {HARD_MAX_POSITION_PCT:.0%})"
+            )
         else:
             quantity = self.calculate_quantity(account_value, entry_price, stop_loss)
             if quantity * entry_price > buying_power:
                 quantity = int(buying_power * 0.9 / entry_price)
                 if quantity < 1:
                     return {"status": "SKIPPED", "reason": "Insufficient buying power"}
+            logger.info(
+                f"Equity sizing — {symbol}: {quantity} shares = ${quantity*entry_price:,.2f} "
+                f"({quantity*entry_price/account_value:.2%} of account, profile cap {p['max_position_pct']:.0%}, hard cap {HARD_MAX_POSITION_PCT:.0%})"
+            )
 
         # ── Validate ──────────────────────────────────────────────────────────
         is_valid, reason = self.validate_order(
