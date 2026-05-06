@@ -115,10 +115,11 @@ class MarketDataFetcher:
             logger.error(f"Bars fetch error for {symbol}: {e}")
             return None
 
-    def calculate_indicators(self, df: pd.DataFrame) -> dict:
+    def calculate_indicators(self, df: pd.DataFrame, min_score: int = 3) -> dict:
         """
-        Calculate RSI, Bollinger Bands, VWAP, moving averages, and ADX.
-        Uses the 'ta' library for accuracy.
+        Calculate RSI, Bollinger Bands, MA deviation, ADX, ATR.
+        min_score is passed from the active risk profile so that
+        mean_reversion_eligible correctly reflects the current profile.
         """
         if df is None or len(df) < 20:
             return {"error": "Insufficient data"}
@@ -129,62 +130,45 @@ class MarketDataFetcher:
             close = df["close"]
             high = df["high"]
             low = df["low"]
-            volume = df["volume"]
 
-            # RSI
-            rsi = ta.momentum.RSIIndicator(close=close, window=14).rsi()
-            current_rsi = float(rsi.iloc[-1])
+            current_rsi = float(ta.momentum.RSIIndicator(close=close, window=14).rsi().iloc[-1])
 
-            # Bollinger Bands
             bb = ta.volatility.BollingerBands(close=close, window=20, window_dev=2)
             bb_upper = float(bb.bollinger_hband().iloc[-1])
             bb_middle = float(bb.bollinger_mavg().iloc[-1])
             bb_lower = float(bb.bollinger_lband().iloc[-1])
-            bb_pct = float(bb.bollinger_pband().iloc[-1])  # % position in band
+            bb_pct = float(bb.bollinger_pband().iloc[-1])
 
-            # ATR for stop sizing
-            atr = ta.volatility.AverageTrueRange(high=high, low=low, close=close, window=14)
-            current_atr = float(atr.average_true_range().iloc[-1])
+            current_atr = float(ta.volatility.AverageTrueRange(high=high, low=low, close=close, window=14).average_true_range().iloc[-1])
+            current_adx = float(ta.trend.ADXIndicator(high=high, low=low, close=close, window=14).adx().iloc[-1])
 
-            # ADX for regime detection
-            adx = ta.trend.ADXIndicator(high=high, low=low, close=close, window=14)
-            current_adx = float(adx.adx().iloc[-1])
-
-            # Moving averages
             ma20 = float(close.rolling(20).mean().iloc[-1])
             ma50 = float(close.rolling(50).mean().iloc[-1])
-
-            # VWAP (approximated from daily data)
-            typical_price = (high + low + close) / 3
-            vwap = float(((typical_price * volume).rolling(20).sum() / volume.rolling(20).sum()).iloc[-1])
-
             current_price = float(close.iloc[-1])
 
-            # Signal scoring
             signals = []
             score = 0
 
-            if current_rsi < 32:
-                signals.append("RSI<32 (strong oversold)")
+            if current_rsi < 35:
+                signals.append("RSI<35 (strong oversold)")
                 score += 2
-            elif current_rsi < 40:
-                signals.append("RSI<40 (mild oversold)")
+            elif current_rsi < 45:
+                signals.append("RSI<45 (mild oversold)")
                 score += 1
 
             if current_price < bb_lower:
                 signals.append("BelowLowerBB")
                 score += 1
 
-            if vwap > 0 and current_price < vwap * 0.99:
-                signals.append("BelowVWAP>1%")
+            if ma20 > 0 and current_price < ma20 * 0.99:
+                signals.append("BelowMA20>1%")
                 score += 1
 
-            if current_adx < 20:
-                signals.append("ADX<20 (ranging market)")
+            if current_adx < 25:
+                signals.append("ADX<25 (ranging market)")
                 score += 1
 
-            # Regime flag
-            trending = current_adx > 25
+            trending = current_adx > 30
 
             return {
                 "current_price": current_price,
@@ -195,7 +179,7 @@ class MarketDataFetcher:
                     "lower": round(bb_lower, 2),
                     "pct_b": round(bb_pct, 3)
                 },
-                "vwap": round(vwap, 2),
+                "ma20_deviation_pct": round((current_price / ma20 - 1) * 100, 2) if ma20 > 0 else 0,
                 "atr": round(current_atr, 2),
                 "adx": round(current_adx, 2),
                 "ma20": round(ma20, 2),
@@ -205,7 +189,7 @@ class MarketDataFetcher:
                 "signal_score": score,
                 "signals_fired": signals,
                 "regime": "TRENDING" if trending else "RANGING",
-                "mean_reversion_eligible": not trending and score >= 3
+                "mean_reversion_eligible": not trending and score >= min_score
             }
 
         except Exception as e:
@@ -315,7 +299,7 @@ class MarketDataFetcher:
         for symbol in equity_symbols:
             logger.info(f"Fetching equity data for {symbol}...")
             bars = self.get_bars(symbol, days=60)
-            indicators = self.calculate_indicators(bars)
+            indicators = self.calculate_indicators(bars, min_score=min_score)
             news = self.get_news(symbol, limit=5)
             sentiment = self.get_sentiment_score(symbol)
 

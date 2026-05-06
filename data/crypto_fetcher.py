@@ -282,10 +282,12 @@ class BybitFetcher:
 
     # ── INDICATORS ────────────────────────────────────────────────────────────
 
-    def calculate_indicators(self, df: Optional[pd.DataFrame]) -> dict:
+    def calculate_indicators(self, df: Optional[pd.DataFrame], min_score: int = 3) -> dict:
         """
-        Calculate RSI, Bollinger Bands, ADX, VWAP, ATR, and signal score.
+        Calculate RSI, Bollinger Bands, ADX, MA, ATR, and signal score.
         Identical logic to MarketDataFetcher.calculate_indicators.
+        min_score is passed in from the active risk profile so that
+        mean_reversion_eligible correctly reflects the current profile.
         """
         if df is None or len(df) < 20:
             return {"error": "Insufficient data"}
@@ -308,22 +310,21 @@ class BybitFetcher:
             adx_val   = float(ta.trend.ADXIndicator(high=high, low=low, close=close, window=14).adx().iloc[-1])
             ma20      = float(close.rolling(20).mean().iloc[-1])
             ma50      = float(close.rolling(50).mean().iloc[-1]) if len(df) >= 50 else ma20
-            vwap      = float(((((high + low + close) / 3) * volume).rolling(20).sum() / volume.rolling(20).sum()).iloc[-1])
             price     = float(close.iloc[-1])
 
             signals, score = [], 0
-            if rsi_val < 32:
-                signals.append("RSI<32 (strong oversold)"); score += 2
-            elif rsi_val < 40:
-                signals.append("RSI<40 (mild oversold)"); score += 1
+            if rsi_val < 35:
+                signals.append("RSI<35 (strong oversold)"); score += 2
+            elif rsi_val < 45:
+                signals.append("RSI<45 (mild oversold)"); score += 1
             if price < bb_lower:
                 signals.append("BelowLowerBB"); score += 1
-            if vwap > 0 and price < vwap * 0.99:
-                signals.append("BelowVWAP>1%"); score += 1
-            if adx_val < 20:
-                signals.append("ADX<20 (ranging market)"); score += 1
+            if ma20 > 0 and price < ma20 * 0.99:
+                signals.append("BelowMA20>1%"); score += 1
+            if adx_val < 25:
+                signals.append("ADX<25 (ranging market)"); score += 1
 
-            trending = adx_val > 25
+            trending = adx_val > 30
             return {
                 "current_price":          price,
                 "rsi":                    round(rsi_val, 2),
@@ -333,7 +334,7 @@ class BybitFetcher:
                     "lower":  round(bb_lower, 2),
                     "pct_b":  round(bb_pct, 3),
                 },
-                "vwap":                   round(vwap, 2),
+                "ma20_deviation_pct":     round((price / ma20 - 1) * 100, 2) if ma20 > 0 else 0,
                 "atr":                    round(atr_val, 2),
                 "adx":                    round(adx_val, 2),
                 "ma20":                   round(ma20, 2),
@@ -343,7 +344,7 @@ class BybitFetcher:
                 "signal_score":           score,
                 "signals_fired":          signals,
                 "regime":                 "TRENDING" if trending else "RANGING",
-                "mean_reversion_eligible": not trending and score >= 3,
+                "mean_reversion_eligible": not trending and score >= min_score,
             }
         except Exception as e:
             logger.error(f"Indicator calculation error: {e}")
@@ -523,16 +524,16 @@ class BybitFetcher:
 
     # ── SNAPSHOT ─────────────────────────────────────────────────────────────
 
-    def _rate_setup(self, indicators: dict) -> str:
+    def _rate_setup(self, indicators: dict, min_score: int = 3) -> str:
         if "error" in indicators:
             return "NO_DATA"
         score    = indicators.get("signal_score", 0)
         eligible = indicators.get("mean_reversion_eligible", False)
         if not eligible:
             return "SKIP"
-        if score >= 5:  return "A_GRADE"
-        if score >= 4:  return "B_GRADE"
-        if score >= 3:  return "C_GRADE"
+        if score >= min_score + 2: return "A_GRADE"
+        if score >= min_score + 1: return "B_GRADE"
+        if score >= min_score:     return "C_GRADE"
         return "SKIP"
 
     def build_crypto_snapshot(self, symbols: list) -> list:
@@ -541,11 +542,15 @@ class BybitFetcher:
         Returns a list in the same format as MarketDataFetcher.build_market_snapshot
         so the dashboard can render both with the same code.
         """
+        from agents.executor import load_risk_profile
+        _, active_profile = load_risk_profile()
+        min_score = active_profile.get("min_signal_score", 3)
+
         results = []
         for symbol in symbols:
             logger.info(f"Fetching Bybit data for {symbol}...")
             df         = self.get_ohlcv(symbol, days=60)
-            indicators = self.calculate_indicators(df)
+            indicators = self.calculate_indicators(df, min_score=min_score)
             ticker     = self.get_ticker(symbol)
 
             # Use live ticker price if indicator calc failed
@@ -558,7 +563,7 @@ class BybitFetcher:
                 "ticker":        ticker,
                 "news_sentiment": {"sentiment": "neutral", "score": 0.0, "source": "none"},
                 "recent_headlines": [],
-                "setup_quality": self._rate_setup(indicators),
+                "setup_quality": self._rate_setup(indicators, min_score=min_score),
                 "exchange":      "bybit",
             })
 

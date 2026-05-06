@@ -35,6 +35,15 @@ risk_profiles:
     max_stop_distance_pct: 0.08 # stop up to 8% from entry
     min_order_value: 50         # minimum $50 order
 
+  low_safety:
+    max_open_positions: 8
+    max_daily_loss_pct: 0.06    # 6% — aggressive daily loss tolerance
+    max_position_pct: 0.20      # 20% of account per order
+    risk_pct_per_trade: 0.02    # 2% account risk per trade
+    min_signal_score: 1         # enters on any single signal out of 6
+    max_stop_distance_pct: 0.12 # stop up to 12% from entry
+    min_order_value: 25         # minimum $25 order
+
 # ── STRATEGY SETTINGS ─────────────────────────────────────
 strategy:
   rsi_period: 14
