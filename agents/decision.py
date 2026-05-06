@@ -316,23 +316,82 @@ Active risk profile requires signal_score >= {self._min_score} to enter. SKIP fr
                     w.get("warning", w.get("detail", str(w))) if isinstance(w, dict) else str(w)
                 )[:150]
 
+        # ── Crypto outlook (separate from equity macro) ──────────────────────
+        crypto_outlook = memo.get("crypto_outlook") or {}
+        c_regime         = ""
+        c_mr_active      = True
+        c_sentiment      = ""
+        c_dominance      = ""
+        c_opp_syms: list = []
+        c_top_warning    = ""
+        if isinstance(crypto_outlook, dict) and crypto_outlook:
+            c_regime    = str(crypto_outlook.get("regime", ""))[:80]
+            c_mr_active = bool(crypto_outlook.get("mean_reversion_active_crypto", True))
+            c_sentiment = str(crypto_outlook.get("sentiment_read", ""))[:160]
+            c_dominance = str(crypto_outlook.get("dominance_read", ""))[:160]
+            c_opps      = crypto_outlook.get("top_crypto_opportunities", []) or []
+            c_opp_syms  = [
+                (o.get("symbol", "?") if isinstance(o, dict) else str(o))
+                for o in c_opps[:3]
+            ]
+            # Highest-severity crypto-specific risk
+            for r in (crypto_outlook.get("crypto_risk_warnings", []) or []):
+                if isinstance(r, dict) and str(r.get("severity", "")).upper() in ("CRITICAL", "HIGH"):
+                    c_top_warning = (r.get("detail") or r.get("description") or r.get("event") or "")[:150]
+                    break
+
         lines = [
             f"WEEKLY RESEARCH BRIEF (confidence {confidence}/10):",
+            "",
+            "── EQUITY MACRO ──",
             f"- Market Regime: {regime}",
-            f"- Mean Reversion Active: {'YES' if mean_rev_active else 'NO — seriously consider SKIP'}",
+            f"- Mean Reversion (equities): {'ACTIVE' if mean_rev_active else 'PAUSED — seriously consider SKIP for any equity entry'}",
         ]
         if sizing_guidance:
             lines.append(f"- Position Sizing Guidance: {sizing_guidance}")
         if opp_syms:
-            lines.append(f"- Flagged Opportunities This Week: {', '.join(opp_syms)}")
+            lines.append(f"- Flagged Equity Opportunities: {', '.join(opp_syms)}")
         if avoid_syms:
             lines.append(f"- AVOID (earnings risk): {', '.join(avoid_syms)}")
+
+        if crypto_outlook:
+            lines += [
+                "",
+                "── CRYPTO MACRO ──",
+                f"- Crypto Regime: {c_regime or 'Unknown'}",
+                f"- Mean Reversion (crypto): {'ACTIVE' if c_mr_active else 'PAUSED — seriously consider SKIP for any crypto entry'}",
+            ]
+            if c_sentiment:
+                lines.append(f"- Sentiment Read: {c_sentiment}")
+            if c_dominance:
+                lines.append(f"- BTC Dominance Read: {c_dominance}")
+            if c_opp_syms:
+                lines.append(f"- Flagged Crypto Opportunities: {', '.join(c_opp_syms)}")
+            if c_top_warning:
+                lines.append(f"- Crypto Risk Warning: {c_top_warning}")
+
         if top_warning:
-            lines.append(f"- Key Risk Warning: {top_warning}")
+            lines.append("")
+            lines.append(f"- Key Cross-Asset Risk Warning: {top_warning}")
+
         if confidence <= 3:
+            lines.append("")
             lines.append("- VERY LOW CONFIDENCE: Only A-grade setups. Halve normal position size.")
         elif confidence <= 5:
+            lines.append("")
             lines.append("- MODERATE CONFIDENCE: Be selective. Prefer high-signal setups.")
+
+        # Strategy gate: if a class is paused, the bot should default to SKIP
+        # for that asset class regardless of the live signal scoring.
+        if not mean_rev_active or (crypto_outlook and not c_mr_active):
+            lines.append("")
+            paused = []
+            if not mean_rev_active:                     paused.append("equities")
+            if crypto_outlook and not c_mr_active:      paused.append("crypto")
+            lines.append(
+                f"- STRATEGY GATE: Mean reversion is PAUSED for {', '.join(paused)} this week. "
+                "Default to SKIP for that asset class unless a setup is unusually strong (A-grade, 5+ signals)."
+            )
 
         return "\n".join(lines)
 
