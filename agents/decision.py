@@ -331,7 +331,7 @@ Active risk profile requires signal_score >= {self._min_score} to enter. SKIP fr
             c_dominance = str(crypto_outlook.get("dominance_read", ""))[:160]
             c_opps      = crypto_outlook.get("top_crypto_opportunities", []) or []
             c_opp_syms  = [
-                (o.get("symbol", "?") if isinstance(o, dict) else str(o))
+                (o.get("symbol", o.get("pair", "?")) if isinstance(o, dict) else str(o))
                 for o in c_opps[:3]
             ]
             # Highest-severity crypto-specific risk
