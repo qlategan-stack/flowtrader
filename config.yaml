@@ -38,7 +38,7 @@ risk_profiles:
   low_safety:
     max_open_positions: 8
     max_daily_loss_pct: 0.06    # 6% — aggressive daily loss tolerance
-    max_position_pct: 0.20      # 20% of account per order
+    max_position_pct: 0.05      # 5% of account per order — capped for test use
     risk_pct_per_trade: 0.02    # 2% account risk per trade
     min_signal_score: 1         # enters on any single signal out of 6
     max_stop_distance_pct: 0.12 # stop up to 12% from entry

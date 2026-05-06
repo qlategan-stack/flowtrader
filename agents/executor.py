@@ -188,21 +188,27 @@ class OrderExecutor:
     ) -> int:
         """
         Position size based on profile risk-per-trade rule.
-        Quantity = (Account × Risk%) / (Entry − Stop)
+        Quantity = (Account × Risk%) / (Entry − Stop), capped at max_position_pct.
+        Both constraints apply: max dollar risk per trade AND max position size.
         """
         if risk_pct is None:
             risk_pct = self.profile["risk_pct_per_trade"]
 
-        if entry_price <= stop_loss:
+        if entry_price <= stop_loss or entry_price <= 0:
             return 0
 
         risk_amount = account_value * risk_pct
         risk_per_share = entry_price - stop_loss
-
         if risk_per_share <= 0:
             return 0
 
         quantity = int(risk_amount / risk_per_share)
+
+        # Hard cap: never exceed max_position_pct of account in one trade
+        max_order_value = account_value * self.profile["max_position_pct"]
+        max_by_pct = int(max_order_value / entry_price)
+        quantity = min(quantity, max_by_pct)
+
         return max(1, quantity)
 
     def place_order(self, decision: dict, account: dict) -> dict:
