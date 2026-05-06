@@ -156,49 +156,58 @@ class OrderExecutor:
     ) -> tuple[bool, str]:
         """
         Guardrail validation against the active risk profile.
-        ALL checks must pass. Returns (is_valid, reason).
+        SELL orders (closing existing positions) skip entry-only checks.
+        Returns (is_valid, reason).
         """
         p = self.profile
+        is_exit = side.upper() == "SELL"
 
-        # 1. Max open positions
-        max_pos = p["max_open_positions"]
-        if current_positions >= max_pos:
-            return False, f"Max positions reached ({current_positions}/{max_pos})"
-
-        # 2. Daily loss limit
+        # Daily loss limit applies to ALL orders — both new entries and exits
         daily_loss_pct = abs(day_pl) / account_value if day_pl < 0 else 0
         loss_limit = p["max_daily_loss_pct"]
         if daily_loss_pct >= loss_limit:
             return False, f"Daily loss limit hit ({daily_loss_pct:.1%} ≥ {loss_limit:.0%}). No more trades today."
 
-        # 3. Position size check
+        # Live-trading confirmation applies to all orders
+        if not self.paper and os.getenv("LIVE_TRADING_CONFIRMED", "false").lower() != "true":
+            return False, "Live trading not confirmed. Set LIVE_TRADING_CONFIRMED=true to enable."
+
+        # Exits skip entry-only guardrails (max positions, position size cap,
+        # min order value, stop loss requirement, stop sanity check)
+        if is_exit:
+            if quantity <= 0:
+                return False, "Exit quantity must be > 0"
+            return True, "Exit checks passed"
+
+        # ── Entry-only checks (BUY) ───────────────────────────────────────────
+        # 1. Max open positions
+        max_pos = p["max_open_positions"]
+        if current_positions >= max_pos:
+            return False, f"Max positions reached ({current_positions}/{max_pos})"
+
+        # 2. Position size check
         order_value = quantity * entry_price
         position_pct = order_value / account_value
         max_pos_pct = p["max_position_pct"]
         if position_pct > max_pos_pct:
             return False, f"Position too large ({position_pct:.1%} of account, max {max_pos_pct:.0%})"
 
-        # 4. Minimum order value
+        # 3. Minimum order value
         min_val = p["min_order_value"]
         if order_value < min_val:
             return False, f"Order value too small (${order_value:.2f}, min ${min_val})"
 
-        # 5. Stop loss must be set
+        # 4. Stop loss must be set for entries
         if not stop_loss or stop_loss <= 0:
             return False, "Stop loss not defined. Cannot place order."
 
-        # 6. Stop loss sanity check
+        # 5. Stop loss sanity check
         max_stop = p["max_stop_distance_pct"]
-        if side.upper() == "BUY":
-            stop_distance_pct = (entry_price - stop_loss) / entry_price
-            if stop_distance_pct > max_stop:
-                return False, f"Stop loss too far ({stop_distance_pct:.1%} from entry, max {max_stop:.0%})"
-            if stop_loss >= entry_price:
-                return False, "Stop loss must be BELOW entry for long positions"
-
-        # 7. Paper trading check
-        if not self.paper and os.getenv("LIVE_TRADING_CONFIRMED", "false").lower() != "true":
-            return False, "Live trading not confirmed. Set LIVE_TRADING_CONFIRMED=true to enable."
+        stop_distance_pct = (entry_price - stop_loss) / entry_price
+        if stop_distance_pct > max_stop:
+            return False, f"Stop loss too far ({stop_distance_pct:.1%} from entry, max {max_stop:.0%})"
+        if stop_loss >= entry_price:
+            return False, "Stop loss must be BELOW entry for long positions"
 
         return True, "All checks passed"
 
@@ -261,6 +270,7 @@ class OrderExecutor:
         take_profit = float(decision.get("take_profit", 0))
 
         is_crypto = _is_crypto(symbol)
+        is_exit   = (action == "SELL")
         p = self.profile
 
         # ── Account context ───────────────────────────────────────────────────
@@ -282,7 +292,13 @@ class OrderExecutor:
             day_pl            = float(account.get("day_pl",          0))
 
         # ── Position sizing ───────────────────────────────────────────────────
-        if is_crypto:
+        if is_exit:
+            # Exits use the existing position quantity from the decision
+            quantity    = float(decision.get("quantity", 0))
+            usdt_budget = quantity * entry_price
+            if quantity <= 0:
+                return {"status": "ERROR", "reason": "Exit quantity must be > 0", "symbol": symbol}
+        elif is_crypto:
             max_usdt = min(account_value * p["max_position_pct"], buying_power * 0.9)
             if p.get("always_max_position"):
                 usdt_budget = max_usdt
@@ -352,15 +368,26 @@ class OrderExecutor:
         try:
             side = self.OrderSide.BUY if action == "BUY" else self.OrderSide.SELL
 
-            order_request = self.MarketOrderRequest(
-                symbol=symbol,
-                qty=quantity,
-                side=side,
-                time_in_force=self.TimeInForce.DAY,
-                order_class="bracket",
-                stop_loss=self.StopLossRequest(stop_price=round(stop_loss, 2)),
-                take_profit=self.TakeProfitRequest(limit_price=round(take_profit, 2))
-            )
+            if is_exit:
+                # Closing an existing position — simple market sell, no bracket.
+                # Alpaca will cancel any open child orders (stop/target) when the
+                # parent position is closed.
+                order_request = self.MarketOrderRequest(
+                    symbol=symbol,
+                    qty=quantity,
+                    side=side,
+                    time_in_force=self.TimeInForce.DAY,
+                )
+            else:
+                order_request = self.MarketOrderRequest(
+                    symbol=symbol,
+                    qty=quantity,
+                    side=side,
+                    time_in_force=self.TimeInForce.DAY,
+                    order_class="bracket",
+                    stop_loss=self.StopLossRequest(stop_price=round(stop_loss, 2)),
+                    take_profit=self.TakeProfitRequest(limit_price=round(take_profit, 2))
+                )
 
             order = self.trading_client.submit_order(order_data=order_request)
             logger.info(f"Alpaca order: {action} {quantity} {symbol} @ ~{entry_price}")

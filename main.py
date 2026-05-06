@@ -43,6 +43,65 @@ def load_config() -> dict:
         return yaml.safe_load(f)
 
 
+def check_exits(market_snapshot: dict, account: dict) -> list[dict]:
+    """
+    Inspect each open position against current indicators and return SELL
+    decisions for positions whose mean-reversion thesis has played out or
+    been invalidated.
+
+    Exit triggers (any one fires):
+      • RSI ≥ 60 — mean-reverted from oversold to neutral/overbought
+      • Price ≥ MA20 — price has reverted to the mean (target reached)
+      • Regime turned TRENDING (ADX > 30) — strategy assumption violated
+    """
+    positions = account.get("positions", []) or []
+    if not positions:
+        return []
+
+    watchlist = market_snapshot.get("watchlist", []) or []
+    by_symbol = {item.get("symbol"): item for item in watchlist}
+
+    decisions = []
+    for pos in positions:
+        sym = pos.get("symbol")
+        item = by_symbol.get(sym)
+        if not item:
+            continue  # No fresh data for this symbol — skip exit check
+        ind = item.get("indicators", {})
+        if "error" in ind:
+            continue
+
+        rsi    = float(ind.get("rsi", 50))
+        price  = float(ind.get("current_price", 0))
+        ma20   = float(ind.get("ma20", 0))
+        regime = ind.get("regime", "RANGING")
+
+        reason = None
+        if rsi >= 60:
+            reason = f"RSI {rsi:.1f} ≥ 60 (mean reverted)"
+        elif ma20 > 0 and price >= ma20:
+            reason = f"Price ${price:.2f} reached MA20 ${ma20:.2f}"
+        elif regime == "TRENDING":
+            reason = "Regime turned TRENDING — exit mean-reversion position"
+
+        if reason:
+            decisions.append({
+                "action":      "SELL",
+                "symbol":      sym,
+                "quantity":    float(pos.get("qty", 0)),
+                "entry_price": price,
+                "stop_loss":   0,
+                "take_profit": 0,
+                "signal_score": ind.get("signal_score", 0),
+                "signals_fired": ind.get("signals_fired", []),
+                "reasoning":   f"Exit signal: {reason}",
+                "journal_entry": f"Closing {sym} ({pos.get('qty')} @ ${price:.2f}): {reason}",
+                "confidence":  "HIGH",
+            })
+
+    return decisions
+
+
 def is_market_hours(config: dict) -> tuple[bool, str]:
     """
     Check if US market is open and within trading window.
@@ -148,7 +207,27 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
             f"Regime={item['indicators'].get('regime', 'N/A')}"
         )
 
-    # Step 3: Get Claude's decision
+    # Step 3a: Check existing positions for exit signals BEFORE new entries.
+    # This implements proactive position management — closes positions whose
+    # mean-reversion thesis has played out, rather than waiting for the bracket
+    # stop/target to fire.
+    exit_decisions = check_exits(market_snapshot, account)
+    for exit_decision in exit_decisions:
+        logger.info(f"Exit triggered: {exit_decision['symbol']} — {exit_decision['reasoning']}")
+        exit_result = executor.place_order(exit_decision, account)
+        logger.info(f"Exit execution: {exit_result.get('status')} — {exit_result.get('reason', 'OK')}")
+        journal.log_decision(
+            decision=exit_decision,
+            execution_result=exit_result,
+            market_snapshot=market_snapshot,
+            account=account,
+        )
+        if os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
+            send_telegram_notification(exit_decision, exit_result, account, market_snapshot)
+        # Refresh account context so the new-entry logic sees the updated positions
+        account = fetcher.get_account_snapshot()
+
+    # Step 3b: Get Claude's decision for new entries
     logger.info("Sending to Claude for analysis...")
     decision = decision_agent.analyze_market(market_snapshot, account)
     logger.info(f"Claude decision: {decision.get('action')} {decision.get('symbol', '')} | Confidence: {decision.get('confidence', 'N/A')}")
@@ -368,8 +447,35 @@ def send_telegram_notification(
         ]
 
     else:
-        # Nothing traded, nothing open — stay silent
-        return
+        # Heartbeat: nothing traded, nothing open — emit a 1-line status so the
+        # user can confirm the bot is alive, on the right profile, and seeing
+        # current signal scores. This is especially valuable during validation;
+        # quiet runs from a working bot still shouldn't be silent.
+        wl = (market_snapshot or {}).get("watchlist", []) or []
+        scores = [s.get("indicators", {}).get("signal_score", 0) for s in wl]
+        top_score = max(scores) if scores else 0
+        top_sym   = ""
+        if scores:
+            top_sym = max(wl, key=lambda s: s.get("indicators", {}).get("signal_score", 0)).get("symbol", "")
+
+        try:
+            from agents.executor import load_risk_profile
+            profile_name, profile = load_risk_profile()
+            min_score = profile.get("min_signal_score", "?")
+        except Exception:
+            profile_name = "?"
+            min_score = "?"
+
+        lines = [
+            f"🟢 <b>FlowTrader — Heartbeat</b>",
+            f"<i>Idle  ·  {len(wl)} symbols scanned</i>",
+            "",
+            f"<code>Profile     {_tg_escape(profile_name)} (min {min_score}/6)\n"
+            f"Top score   {top_score} ({_tg_escape(top_sym) or '—'})</code>",
+            "",
+            acct_line,
+            f"🕐 {time_str}",
+        ]
 
     message = "\n".join(lines)
     try:
