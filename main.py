@@ -501,9 +501,13 @@ if __name__ == "__main__":
         print(review)
     elif mode == "research-analyst":
         from agents.researcher import ResearchAnalyst
-        watchlist = config.get("watchlist", {}).get("equities", [])
+        watchlist        = config.get("watchlist", {}).get("equities", [])
+        crypto_watchlist = config.get("watchlist", {}).get("crypto", [])
         analyst = ResearchAnalyst()
-        result = analyst.run_full_analysis(current_watchlist=watchlist)
+        result = analyst.run_full_analysis(
+            current_watchlist=watchlist,
+            crypto_watchlist=crypto_watchlist,
+        )
         print(json.dumps(result, indent=2))
     elif mode == "test":
         # Quick test — just fetch data and log, no trades

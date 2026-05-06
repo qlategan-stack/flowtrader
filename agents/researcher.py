@@ -355,6 +355,109 @@ class ResearchAnalyst:
             logger.error(f"News fetch error: {e}")
             return []
 
+    # ── CRYPTO RESEARCH ───────────────────────────────────────────────────────
+
+    def get_crypto_macro(self) -> dict:
+        """
+        Fetch the crypto-market equivalents of VIX + sector rotation:
+          - Fear & Greed Index (alternative.me, free, no key)
+          - BTC dominance + total market cap (CoinGecko, free, no key)
+        These give Claude a read on crypto sentiment and regime
+        (BTC-led vs alt-season vs risk-off).
+        """
+        out: dict = {}
+
+        # Fear & Greed (0–100, plus a label)
+        try:
+            r = requests.get("https://api.alternative.me/fng/?limit=2", timeout=10)
+            data = r.json().get("data", [])
+            if data:
+                today = data[0]
+                yesterday = data[1] if len(data) > 1 else {}
+                value = int(today.get("value", 0))
+                label = today.get("value_classification", "")
+                prev  = int(yesterday.get("value", value)) if yesterday else value
+                out["fear_greed"] = {
+                    "value": value,
+                    "label": label,
+                    "change_1d": value - prev,
+                }
+        except Exception as e:
+            logger.warning(f"Fear & Greed fetch failed: {e}")
+            out["fear_greed"] = {"error": str(e)}
+
+        # BTC dominance + total market cap (CoinGecko global endpoint)
+        try:
+            r = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
+            data = r.json().get("data", {})
+            btc_dom    = round(float(data.get("market_cap_percentage", {}).get("btc", 0)), 2)
+            eth_dom    = round(float(data.get("market_cap_percentage", {}).get("eth", 0)), 2)
+            total_mcap = float(data.get("total_market_cap", {}).get("usd", 0))
+            mcap_24h   = round(float(data.get("market_cap_change_percentage_24h_usd", 0)), 2)
+            out["dominance"] = {
+                "btc_pct":          btc_dom,
+                "eth_pct":          eth_dom,
+                "total_mcap_usd":   round(total_mcap, 0),
+                "mcap_change_24h":  mcap_24h,
+            }
+        except Exception as e:
+            logger.warning(f"CoinGecko global fetch failed: {e}")
+            out["dominance"] = {"error": str(e)}
+
+        # Interpretation hints (Claude will produce the final read)
+        try:
+            fg_val = out.get("fear_greed", {}).get("value")
+            if isinstance(fg_val, int):
+                if   fg_val <= 24: out["sentiment_hint"] = "EXTREME_FEAR — historically a contrarian buy zone"
+                elif fg_val <= 44: out["sentiment_hint"] = "FEAR — cautious but mean-reversion friendly"
+                elif fg_val <= 55: out["sentiment_hint"] = "NEUTRAL — no strong sentiment edge"
+                elif fg_val <= 74: out["sentiment_hint"] = "GREED — overheated risk; tighten or skip extensions"
+                else:              out["sentiment_hint"] = "EXTREME_GREED — euphoria; mean-reversion shorts often emerge"
+
+            btc_d = out.get("dominance", {}).get("btc_pct")
+            if isinstance(btc_d, float):
+                if   btc_d >= 55: out["regime_hint"] = "BTC-led — alts underperforming, BTC absorbing flows"
+                elif btc_d >= 48: out["regime_hint"] = "Balanced — neither alts nor BTC dominating decisively"
+                else:              out["regime_hint"] = "Alt-favourable — BTC dominance falling, capital rotating into alts"
+        except Exception:
+            pass
+
+        return out
+
+    def get_crypto_setups(self, watchlist: list) -> list:
+        """
+        Run the existing BybitFetcher snapshot over the configured crypto pairs
+        so Claude has the same RSI/BB/ADX/score readings the live bot will use.
+        """
+        if not watchlist:
+            return []
+        try:
+            from data.crypto_fetcher import BybitFetcher
+            results = BybitFetcher().build_crypto_snapshot(watchlist)
+            # Strip down to the fields Claude actually needs
+            slim = []
+            for item in results:
+                ind = item.get("indicators", {}) or {}
+                tk  = item.get("ticker", {}) or {}
+                slim.append({
+                    "symbol":          item.get("symbol"),
+                    "setup_quality":   item.get("setup_quality"),
+                    "signal_score":    ind.get("signal_score"),
+                    "signals_fired":   ind.get("signals_fired"),
+                    "regime":          ind.get("regime"),
+                    "rsi":             ind.get("rsi"),
+                    "adx":             ind.get("adx"),
+                    "bb_pct":          (ind.get("bollinger") or {}).get("pct_b"),
+                    "ma20_dev_pct":    ind.get("ma20_deviation_pct"),
+                    "current_price":   ind.get("current_price"),
+                    "change_24h_pct":  tk.get("change_pct_24h"),
+                    "volume_24h_usdt": tk.get("volume_24h_usdt"),
+                })
+            return slim
+        except Exception as e:
+            logger.error(f"Crypto setup scan failed: {e}")
+            return []
+
     # ── CLAUDE ANALYSIS ───────────────────────────────────────────────────────
 
     def generate_weekly_memo(
@@ -364,7 +467,10 @@ class ResearchAnalyst:
         candidates: list,
         earnings: list,
         news: list,
-        current_watchlist: list
+        current_watchlist: list,
+        crypto_macro: Optional[dict] = None,
+        crypto_setups: Optional[list] = None,
+        crypto_watchlist: Optional[list] = None,
     ) -> dict:
         """
         Send all research data to Claude and get a structured weekly memo back.
@@ -373,15 +479,20 @@ class ResearchAnalyst:
 
         # Build the research prompt
         earnings_symbols = [e["symbol"] for e in earnings]
+        crypto_macro     = crypto_macro     or {}
+        crypto_setups    = crypto_setups    or []
+        crypto_watchlist = crypto_watchlist or []
 
         prompt = f"""
-You are FlowTrader's Research Analyst. It is Sunday evening.
-Your job is to prepare the trading brief for next week.
+You are FlowTrader's Research Analyst. It is the start of the trading window.
+Your job is to prepare the trading brief covering BOTH US equities AND
+crypto for the days ahead.  The bot trades both: equity orders go via
+Alpaca, crypto spot orders go via Bybit.
 
-Analyse all the data below and produce a structured weekly memo.
+Analyse all the data below and produce a structured memo.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-MACRO CONDITIONS
+EQUITY MACRO CONDITIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 VIX (Fear Index): {json.dumps(vix, indent=2)}
 
@@ -391,19 +502,35 @@ SECTOR PERFORMANCE (past week)
 {json.dumps(sectors, indent=2)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-BROADER UNIVERSE SCAN (mean reversion candidates)
+BROADER EQUITY UNIVERSE SCAN (mean reversion candidates)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {json.dumps(candidates, indent=2)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-EARNINGS THIS WEEK (AVOID these symbols)
+EARNINGS THIS WEEK (AVOID these equity symbols)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {json.dumps(earnings, indent=2)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CURRENT TRADING BOT WATCHLIST
+CURRENT EQUITY WATCHLIST
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {json.dumps(current_watchlist, indent=2)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRYPTO MACRO CONDITIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Fear & Greed Index, BTC dominance, total market cap, sentiment / regime hints:
+{json.dumps(crypto_macro, indent=2)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRYPTO SETUPS (current per-pair indicators from the live scanner)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{json.dumps(crypto_setups, indent=2)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CURRENT CRYPTO WATCHLIST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{json.dumps(crypto_watchlist, indent=2)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RECENT MARKET NEWS
@@ -414,38 +541,57 @@ RECENT MARKET NEWS
 YOUR OUTPUT MUST INCLUDE ALL OF THESE SECTIONS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. MARKET REGIME ASSESSMENT
+1. MARKET REGIME ASSESSMENT (equities)
    - Is the overall market trending or ranging?
-   - Should mean reversion strategies be active or paused?
+   - Should mean reversion strategies be active or paused for equities?
    - VIX interpretation and what it means for position sizing
 
-2. TOP 3 OPPORTUNITIES FOR NEXT WEEK
-   - Specific symbols with the strongest mean reversion setups
-   - Why each one qualifies (signal strength, sector conditions)
+2. TOP OPPORTUNITIES FOR THE WEEK (equities + crypto, mixed)
+   - Up to 3 equity setups and up to 3 crypto setups — flag asset_class
+   - Why each one qualifies (signal strength, regime fit, catalysts)
    - Suggested position size adjustment if any
 
 3. WATCHLIST CHANGES RECOMMENDED
-   - Symbols to ADD to the watchlist this week (from broader scan)
-   - Symbols to REMOVE or reduce weighting
-   - Symbols to AVOID due to upcoming earnings: {earnings_symbols}
+   - Equity symbols to ADD / REMOVE / AVOID (earnings: {earnings_symbols})
+   - Crypto pairs to ADD / REMOVE / AVOID — base your additions on
+     liquidity and mean-reversion fit; don't suggest adding stablecoins,
+     wrapped tokens, or pairs that aren't on Binance/Bybit
 
-4. SECTOR FOCUS
+4. SECTOR FOCUS (equities only)
    - Which 2-3 sectors show the best mean reversion conditions?
    - Which sectors to avoid or underweight?
 
-5. RISK WARNINGS
+5. CRYPTO OUTLOOK
+   - regime: a short label such as "BTC-led", "Alt-favourable",
+     "Risk-off", "Range-bound", "Trending up", "Trending down"
+   - mean_reversion_active_crypto: true/false — should the crypto
+     mean-reversion strategy be engaged this week?
+   - sentiment_read: 1-2 sentences on Fear & Greed + dominance trend
+   - dominance_read: 1-2 sentences on what BTC dominance is doing
+   - top_crypto_opportunities: 1-3 specific pairs that look strongest,
+     each with rationale + direction (LONG only — bot is spot)
+   - crypto_risk_warnings: list of {{event, severity, detail}} —
+     anything regulatory, macro, exchange-related, or technical that
+     could disrupt the crypto book this week
+
+6. RISK WARNINGS (cross-asset)
    - Any macro events this week that could disrupt trading?
    - Specific risk flags the Trading Agent should be aware of
    - Recommended max position size given current VIX level
 
-6. TRADING CONFIDENCE SCORE FOR THE WEEK
+7. TRADING CONFIDENCE SCORE FOR THE WEEK
    - Score from 1-10 (10 = ideal conditions, 1 = pause trading)
-   - One sentence justification
+   - One sentence justification — should account for BOTH equity
+     and crypto conditions weighted by where the bot has more capital
 
 Return this as a JSON object with these exact keys:
 market_regime, top_opportunities, watchlist_changes,
-sector_focus, risk_warnings, confidence_score, confidence_reason,
-generated_at, valid_until
+sector_focus, crypto_outlook, risk_warnings, confidence_score,
+confidence_reason, generated_at, valid_until
+
+The crypto_outlook value MUST be a JSON object with these keys:
+regime, mean_reversion_active_crypto, sentiment_read, dominance_read,
+top_crypto_opportunities, crypto_risk_warnings
 """
 
         try:
@@ -674,22 +820,25 @@ generated_at, valid_until
 
     # ── MAIN ENTRY POINT ─────────────────────────────────────────────────────
 
-    def run_full_analysis(self, current_watchlist: list = None) -> dict:
+    def run_full_analysis(
+        self,
+        current_watchlist: list = None,
+        crypto_watchlist: list = None,
+    ) -> dict:
         """
         Run the complete weekly research analysis.
-        This is called by the GitHub Actions Sunday schedule.
+        This is called by the GitHub Actions Sunday/Wednesday schedule.
         """
         if current_watchlist is None:
-            current_watchlist = [
-                "NVDA", "AAPL", "MSFT", "QQQ", "SPY",
-                "AMD", "GLD", "BTC/USDT", "ETH/USDT"
-            ]
+            current_watchlist = ["NVDA", "AAPL", "MSFT", "QQQ", "SPY", "AMD", "GLD"]
+        if crypto_watchlist is None:
+            crypto_watchlist = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
 
         logger.info("=" * 60)
-        logger.info("FlowTrader Research Analyst — Weekly Analysis Starting")
+        logger.info("FlowTrader Research Analyst — Analysis Starting")
         logger.info("=" * 60)
 
-        # Step 1: Macro conditions
+        # Step 1: Equity macro
         logger.info("Fetching VIX...")
         vix = self.get_vix_level()
         logger.info(f"VIX: {vix.get('vix')} — {vix.get('risk_level')}")
@@ -700,7 +849,7 @@ generated_at, valid_until
         logger.info(f"Sector data: {len(sectors)} sectors retrieved")
 
         # Step 3: Broader universe scan
-        logger.info("Scanning broader universe for mean reversion setups...")
+        logger.info("Scanning broader equity universe for mean reversion setups...")
         candidates = self.get_broader_universe_scan()
         logger.info(f"Found {len(candidates)} candidates in broader scan")
 
@@ -709,19 +858,34 @@ generated_at, valid_until
         earnings = self.get_earnings_calendar()
         logger.info(f"Found {len(earnings)} earnings events this week")
 
-        # Step 5: Market news
+        # Step 5: Crypto macro (Fear & Greed, BTC dominance, total mcap)
+        logger.info("Fetching crypto macro (Fear & Greed, BTC dominance)...")
+        crypto_macro = self.get_crypto_macro()
+        fg = crypto_macro.get("fear_greed", {}).get("value", "—")
+        bd = crypto_macro.get("dominance", {}).get("btc_pct", "—")
+        logger.info(f"Crypto macro — Fear/Greed: {fg} | BTC dom: {bd}%")
+
+        # Step 6: Crypto per-pair setup snapshot
+        logger.info(f"Scanning {len(crypto_watchlist)} crypto pairs for setups...")
+        crypto_setups = self.get_crypto_setups(crypto_watchlist)
+        logger.info(f"Crypto setup snapshot: {len(crypto_setups)} pairs")
+
+        # Step 7: Market news
         logger.info("Fetching market news...")
         news = self.get_market_news_summary()
 
-        # Step 6: Claude analysis
-        logger.info("Sending to Claude for weekly memo generation...")
+        # Step 8: Claude analysis
+        logger.info("Sending to Claude for memo generation...")
         memo = self.generate_weekly_memo(
             vix=vix,
             sectors=sectors,
             candidates=candidates,
             earnings=earnings,
             news=news,
-            current_watchlist=current_watchlist
+            current_watchlist=current_watchlist,
+            crypto_macro=crypto_macro,
+            crypto_setups=crypto_setups,
+            crypto_watchlist=crypto_watchlist,
         )
 
         # Step 7: Save outputs
@@ -754,16 +918,21 @@ if __name__ == "__main__":
         format="%(asctime)s [%(levelname)s] %(name)s — %(message)s"
     )
 
-    # Load watchlist from config
+    # Load watchlists from config
     try:
         with open("config.yaml", "r") as f:
             config = yaml.safe_load(f)
-        watchlist = config.get("watchlist", {}).get("equities", [])
+        watchlist        = config.get("watchlist", {}).get("equities", [])
+        crypto_watchlist = config.get("watchlist", {}).get("crypto", [])
     except FileNotFoundError:
-        watchlist = ["NVDA", "AAPL", "MSFT", "QQQ", "SPY", "AMD", "GLD"]
+        watchlist        = ["NVDA", "AAPL", "MSFT", "QQQ", "SPY", "AMD", "GLD"]
+        crypto_watchlist = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
 
     analyst = ResearchAnalyst()
-    result = analyst.run_full_analysis(current_watchlist=watchlist)
+    result  = analyst.run_full_analysis(
+        current_watchlist=watchlist,
+        crypto_watchlist=crypto_watchlist,
+    )
 
     print("\n" + "=" * 60)
     print("RESEARCH ANALYST COMPLETE")
