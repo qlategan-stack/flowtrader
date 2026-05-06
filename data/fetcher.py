@@ -269,6 +269,24 @@ class MarketDataFetcher:
             logger.error(f"Sentiment error for {symbol}: {e}")
             return {"sentiment": "neutral", "score": 0.0}
 
+    def get_latest_price(self, symbol: str) -> Optional[float]:
+        """
+        Fetch the real-time intraday price for a symbol via Alpaca's latest bar.
+        Returns None if unavailable (market closed, no data, etc.).
+        Used to override the stale daily-close current_price during market hours.
+        """
+        if not self.stock_client:
+            return None
+        try:
+            req = StockLatestBarRequest(symbol_or_symbols=symbol, feed="iex")
+            bars = self.stock_client.get_stock_latest_bar(req)
+            bar = bars.get(symbol)
+            if bar:
+                return float(bar.close)
+        except Exception as e:
+            logger.debug(f"Latest price fetch failed for {symbol}: {e}")
+        return None
+
     def build_market_snapshot(self, watchlist: list) -> dict:
         """
         Build the full market snapshot JSON that Claude reads.
@@ -276,6 +294,11 @@ class MarketDataFetcher:
         (anything containing "/", e.g. BTC/USDT) go via BybitFetcher.
         Both venues' results land in the same watchlist with identical
         schema so the decision agent treats them uniformly.
+
+        Indicators (RSI, BB, ADX, MA) are calculated from daily OHLCV bars —
+        they update once per day at market close.  current_price is overridden
+        with the latest intraday bar so entry prices and signal comparisons
+        (BelowMA20, BelowLowerBB) reflect the live market.
         """
         est = pytz.timezone("America/New_York")
         now_est = datetime.now(est)
@@ -302,6 +325,48 @@ class MarketDataFetcher:
             indicators = self.calculate_indicators(bars, min_score=min_score)
             news = self.get_news(symbol, limit=5)
             sentiment = self.get_sentiment_score(symbol)
+
+            # Override current_price with real-time intraday price so entry
+            # prices, stop distances, and price-level signals are always live.
+            live_price = self.get_latest_price(symbol)
+            if live_price and "error" not in indicators:
+                ma20 = indicators.get("ma20", 0)
+                bb_lower = indicators.get("bollinger", {}).get("lower", 0)
+                atr = indicators.get("atr", 0)
+                indicators["current_price"] = live_price
+                indicators["price_source"] = "live_intraday"
+                if ma20 > 0:
+                    indicators["ma20_deviation_pct"] = round((live_price / ma20 - 1) * 100, 2)
+                    # Re-evaluate BelowMA20 signal with live price
+                    fired = indicators.get("signals_fired", [])
+                    score = indicators.get("signal_score", 0)
+                    had_below_ma20 = any("BelowMA20" in s for s in fired)
+                    now_below_ma20 = live_price < ma20 * 0.99
+                    if not had_below_ma20 and now_below_ma20:
+                        fired.append("BelowMA20>1%")
+                        score += 1
+                    elif had_below_ma20 and not now_below_ma20:
+                        fired = [s for s in fired if "BelowMA20" not in s]
+                        score -= 1
+                    # Re-evaluate BelowLowerBB signal
+                    had_below_bb = any("BelowLowerBB" in s for s in fired)
+                    now_below_bb = bb_lower > 0 and live_price < bb_lower
+                    if not had_below_bb and now_below_bb:
+                        fired.append("BelowLowerBB")
+                        score += 1
+                    elif had_below_bb and not now_below_bb:
+                        fired = [s for s in fired if "BelowLowerBB" not in s]
+                        score -= 1
+                    indicators["signals_fired"] = fired
+                    indicators["signal_score"] = max(0, score)
+                    indicators["mean_reversion_eligible"] = (
+                        indicators.get("adx", 30) <= 30
+                        and indicators["signal_score"] >= min_score
+                    )
+                if atr > 0:
+                    indicators["stop_loss_price"] = round(live_price - 0.5 * atr, 2)
+            else:
+                indicators["price_source"] = "daily_close"
 
             if sentiment.get("score", 0) > 0.15:
                 indicators["signal_score"] = indicators.get("signal_score", 0) + 1

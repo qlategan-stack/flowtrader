@@ -557,6 +557,44 @@ class BybitFetcher:
             if "current_price" not in indicators and ticker.get("price"):
                 indicators["current_price"] = ticker["price"]
 
+            # Always override current_price with the live ticker price so
+            # intraday moves are reflected even though indicators use daily bars.
+            live_price = ticker.get("price")
+            if live_price and "error" not in indicators:
+                ma20     = indicators.get("ma20", 0)
+                bb_lower = indicators.get("bollinger", {}).get("lower", 0)
+                atr      = indicators.get("atr", 0)
+                indicators["current_price"] = live_price
+                indicators["price_source"]  = "live_intraday"
+                if ma20 > 0:
+                    indicators["ma20_deviation_pct"] = round((live_price / ma20 - 1) * 100, 2)
+                    fired = indicators.get("signals_fired", [])
+                    score = indicators.get("signal_score", 0)
+                    had_ma20 = any("BelowMA20" in s for s in fired)
+                    now_ma20 = live_price < ma20 * 0.99
+                    if not had_ma20 and now_ma20:
+                        fired.append("BelowMA20>1%"); score += 1
+                    elif had_ma20 and not now_ma20:
+                        fired = [s for s in fired if "BelowMA20" not in s]; score -= 1
+                    had_bb = any("BelowLowerBB" in s for s in fired)
+                    now_bb = bb_lower > 0 and live_price < bb_lower
+                    if not had_bb and now_bb:
+                        fired.append("BelowLowerBB"); score += 1
+                    elif had_bb and not now_bb:
+                        fired = [s for s in fired if "BelowLowerBB" not in s]; score -= 1
+                    indicators["signals_fired"] = fired
+                    indicators["signal_score"]  = max(0, score)
+                    indicators["mean_reversion_eligible"] = (
+                        indicators.get("adx", 30) <= 30 and indicators["signal_score"] >= min_score
+                    )
+                if atr > 0:
+                    indicators["stop_loss_price"] = round(live_price - 0.5 * atr, 6)
+            elif live_price and "current_price" not in indicators:
+                indicators["current_price"] = live_price
+                indicators["price_source"]  = "live_ticker_fallback"
+            else:
+                indicators["price_source"] = "daily_close"
+
             results.append({
                 "symbol":        symbol,
                 "indicators":    indicators,
