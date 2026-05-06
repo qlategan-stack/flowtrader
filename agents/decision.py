@@ -197,34 +197,53 @@ Active risk profile requires signal_score >= {self._min_score} to enter. SKIP fr
         """Extract JSON decision from Claude's response."""
         import re
 
-        # Try to find JSON block in the response
-        json_patterns = [
-            r'```json\s*(.*?)\s*```',
-            r'```\s*(.*?)\s*```',
-            r'\{[^{}]*"action"[^{}]*\}'
-        ]
-
-        for pattern in json_patterns:
-            matches = re.findall(pattern, raw_text, re.DOTALL)
-            if matches:
+        # 1. Try explicit code-fence blocks first (most reliable)
+        for pattern in [r'```json\s*(.*?)\s*```', r'```\s*(.*?)\s*```']:
+            for m in re.findall(pattern, raw_text, re.DOTALL):
                 try:
-                    return json.loads(matches[0])
+                    parsed = json.loads(m)
+                    if "action" in parsed:
+                        return parsed
                 except json.JSONDecodeError:
                     continue
 
-        # If no JSON found, try parsing the whole response
+        # 2. Brace-counting extractor — finds any balanced {...} block in the
+        #    response that contains an "action" key.  This handles nested objects
+        #    and arrays that the old [^{}]* regex could not.
+        depth, start = 0, -1
+        for i, ch in enumerate(raw_text):
+            if ch == "{":
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0 and start != -1:
+                    candidate = raw_text[start : i + 1]
+                    try:
+                        parsed = json.loads(candidate)
+                        if "action" in parsed:
+                            return parsed
+                    except json.JSONDecodeError:
+                        pass
+                    start = -1
+
+        # 3. Try parsing the entire response as JSON
         try:
-            return json.loads(raw_text)
+            parsed = json.loads(raw_text)
+            if "action" in parsed:
+                return parsed
         except json.JSONDecodeError:
             pass
 
-        # Fallback: extract action keyword
+        # 4. Last resort — keyword detection only, no symbol
         action = "SKIP"
         for word in ["BUY", "SELL", "HOLD", "SKIP"]:
             if word in raw_text.upper():
                 action = word
                 break
 
+        logger.warning(f"JSON parse failed — fell back to keyword '{action}'. Raw (200): {raw_text[:200]}")
         return {
             "action": action,
             "symbol": None,
