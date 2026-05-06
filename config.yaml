@@ -81,12 +81,15 @@ watchlist:
     - TLT     # 20+ Year Treasury Bond ETF — rate & risk-off signal
 
   crypto:
-    - BTC/USDT    # Bitcoin — deepest liquidity
+    - BTC/USDT    # Bitcoin — regime setter, deepest liquidity
     - ETH/USDT    # Ethereum — second most liquid
-    - SOL/USDT    # Solana — good volatility for mean reversion
-    - AVAX/USDT   # Avalanche — alt-L1, high vol mean reversion
+    - XRP/USDT    # Ripple — top-5 cap, ranges cleanly between levels
+    - LTC/USDT    # Litecoin — historically cleanest BTC-lagging MR pair
+    - SOL/USDT    # Solana — alt-L1, high volatility
+    - ADA/USDT    # Cardano — wide predictable ranging channels
+    - DOT/USDT    # Polkadot — interop chain, low persistent trend
     - LINK/USDT   # Chainlink — oracle token, technical patterns
-    - DOGE/USDT   # Dogecoin — sentiment-driven, high vol
+    - NEAR/USDT   # NEAR Protocol — L1 diversification from SOL
 
 # ── SCHEDULE ──────────────────────────────────────────────
 schedule:
