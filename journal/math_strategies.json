@@ -1,0 +1,29 @@
+{
+  "strategies": {
+    "wavelet_denoising": {
+      "enabled": false
+    },
+    "hurst_exponent": {
+      "enabled": false
+    },
+    "entropy_regime": {
+      "enabled": false
+    },
+    "levy_jump": {
+      "enabled": false
+    },
+    "transfer_entropy": {
+      "enabled": false
+    },
+    "rmt_correlation": {
+      "enabled": false
+    },
+    "wasserstein_regime": {
+      "enabled": false
+    },
+    "tda_features": {
+      "enabled": false
+    }
+  },
+  "updated_at": "2026-05-08T12:51:39.981306+00:00"
+}

@@ -316,8 +316,14 @@ class MarketDataFetcher:
         }
 
         from agents.executor import load_risk_profile
+        from strategies.engine import StrategyEngine
         _, active_profile = load_risk_profile()
         min_score = active_profile.get("min_signal_score", 3)
+
+        engine = StrategyEngine()
+        active_math = engine.active_strategies()
+        if active_math:
+            logger.info(f"Math strategies active (equities): {active_math}")
 
         for symbol in equity_symbols:
             logger.info(f"Fetching equity data for {symbol}...")
@@ -371,6 +377,10 @@ class MarketDataFetcher:
             if sentiment.get("score", 0) > 0.15:
                 indicators["signal_score"] = indicators.get("signal_score", 0) + 1
                 indicators["signals_fired"] = indicators.get("signals_fired", []) + ["PositiveSentiment"]
+
+            # Apply per-symbol mathematical strategies
+            if "error" not in indicators and bars is not None:
+                indicators = engine.enrich_symbol(symbol, bars, indicators)
 
             snapshot["watchlist"].append({
                 "symbol": symbol,

@@ -543,19 +543,32 @@ class BybitFetcher:
         so the dashboard can render both with the same code.
         """
         from agents.executor import load_risk_profile
+        from strategies.engine import StrategyEngine
         _, active_profile = load_risk_profile()
         min_score = active_profile.get("min_signal_score", 3)
 
+        engine = StrategyEngine()
+        active = engine.active_strategies()
+        if active:
+            logger.info(f"Math strategies active: {active}")
+
+        ohlcv_cache: dict = {}  # {symbol: df} — used by multi-asset strategies
         results = []
         for symbol in symbols:
             logger.info(f"Fetching Bybit data for {symbol}...")
             df         = self.get_ohlcv(symbol, days=60)
+            if df is not None:
+                ohlcv_cache[symbol] = df
             indicators = self.calculate_indicators(df, min_score=min_score)
             ticker     = self.get_ticker(symbol)
 
             # Use live ticker price if indicator calc failed
             if "current_price" not in indicators and ticker.get("price"):
                 indicators["current_price"] = ticker["price"]
+
+            # Apply per-symbol mathematical strategies (Hurst, wavelet, entropy, Lévy)
+            if "error" not in indicators and df is not None:
+                indicators = engine.enrich_symbol(symbol, df, indicators)
 
             # Always override current_price with the live ticker price so
             # intraday moves are reflected even though indicators use daily bars.
@@ -606,4 +619,11 @@ class BybitFetcher:
             })
 
         results.sort(key=lambda x: x["indicators"].get("signal_score", 0), reverse=True)
+
+        # Apply multi-asset mathematical strategies (Transfer Entropy, RMT, Wasserstein, TDA)
+        portfolio_math = engine.enrich_portfolio(results, ohlcv_cache)
+        if portfolio_math:
+            for item in results:
+                item["portfolio_math_signals"] = portfolio_math
+
         return results
