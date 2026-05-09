@@ -248,6 +248,24 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
     if os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
         send_telegram_notification(decision, execution_result, account, market_snapshot)
 
+    # Step 6b: Bot-level API failure alert (rate-limited so it doesn't spam).
+    # Fires the first time Anthropic rejects a request, then again every 24h
+    # if the same error persists, and immediately on a different error kind.
+    if decision.get("api_error") and os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
+        from journal.api_alert_state import should_alert, record_alert
+        state_path = Path("journal/last_api_alert.json")
+        kind = decision.get("api_error_kind", "other")
+        if should_alert(state_path, kind):
+            detail = (decision.get("reasoning") or "")[:300]
+            text = (
+                f"🚨 FlowTrader — Anthropic API failure ({kind})\n\n"
+                f"The bot could not get a decision from Claude this cycle. "
+                f"All sessions will SKIP until this resolves.\n\n"
+                f"Detail: {detail}"
+            )
+            send_telegram_alert(text)
+            record_alert(state_path, kind)
+
     result = {
         "status": "COMPLETE",
         "action": decision.get("action"),
@@ -318,6 +336,29 @@ def run_analyst_full(config: dict) -> dict:
     if os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
         _send_analyst_telegram_notification(len(in_ids), len(out_ids))
     return result
+
+
+def send_telegram_alert(text: str) -> None:
+    """
+    Send a plain-text Telegram alert. Used for bot-level failures
+    (e.g. Anthropic API rejected the request).
+
+    Plain text — no parse_mode — so special characters in error messages
+    cannot break Telegram's MarkdownV2/HTML parser and silently drop the alert.
+    """
+    import requests
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text},
+            timeout=5,
+        )
+    except Exception as e:
+        logger.warning(f"Telegram alert failed: {e}")
 
 
 def _send_analyst_telegram_notification(in_count: int, out_count: int):

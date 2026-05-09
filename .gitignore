@@ -25,6 +25,7 @@ env/
 
 # Logs and journals (kept locally, uploaded as GitHub artifacts)
 journal/bot.log
+journal/last_api_alert.json
 
 
 # OS

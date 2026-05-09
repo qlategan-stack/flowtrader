@@ -15,6 +15,27 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+def _classify_api_error(exc: Exception) -> str:
+    """
+    Classify an Anthropic SDK exception into a stable kind string used by the
+    Telegram-alert rate-limiter. The classifier is intentionally string- and
+    status-code-based (not isinstance) so it does not couple to specific SDK
+    exception classes.
+    """
+    msg = str(exc).lower()
+    status = getattr(exc, "status_code", None)
+
+    if "credit balance" in msg or "billing" in msg:
+        return "credit_exhausted"
+    if status == 401 or "authentication" in msg or "invalid api key" in msg:
+        return "auth"
+    if status == 429 or "rate limit" in msg:
+        return "rate_limit"
+    if "connection" in msg or "timeout" in msg or "timed out" in msg:
+        return "connection"
+    return "other"
+
+
 class TradingDecisionAgent:
     """
     Claude-powered decision agent.
@@ -51,7 +72,7 @@ class TradingDecisionAgent:
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=2000,
+                max_tokens=4000,
                 system=self.system_prompt,
                 messages=[
                     {"role": "user", "content": user_message}
@@ -69,7 +90,9 @@ class TradingDecisionAgent:
                 "action": "SKIP",
                 "symbol": None,
                 "reasoning": f"Claude API error: {str(e)}",
-                "journal_entry": f"Session skipped due to API error: {str(e)}"
+                "journal_entry": f"Session skipped due to API error: {str(e)}",
+                "api_error": True,
+                "api_error_kind": _classify_api_error(e),
             }
 
     def analyze_single_symbol(self, symbol_data: dict, account: dict) -> dict:
@@ -113,7 +136,13 @@ If signal_score < {self._min_score} or regime is TRENDING, the answer must be SK
 
         except Exception as e:
             logger.error(f"Decision error for {symbol_data.get('symbol', 'UNKNOWN')}: {e}")
-            return {"action": "SKIP", "symbol": symbol_data.get("symbol"), "reasoning": str(e)}
+            return {
+                "action": "SKIP",
+                "symbol": symbol_data.get("symbol"),
+                "reasoning": str(e),
+                "api_error": True,
+                "api_error_kind": _classify_api_error(e),
+            }
 
     def run_weekly_review(self, journal_entries: list) -> str:
         """
@@ -187,8 +216,10 @@ TASK:
 2. Weigh them against the weekly research brief above
 3. Select the BEST single trade to place this session (or SKIP if nothing qualifies)
 4. If multiple qualify, pick highest signal score with lowest risk
-5. Return your decision as the JSON format specified in your rules
-6. Write a detailed journal entry
+
+CRITICAL OUTPUT RULE: Your response MUST begin with the JSON decision block inside
+a ```json code fence. Do NOT write any analysis or prose before the JSON block.
+Reasoning and journal_entry go inside the JSON fields, not outside it.
 
 Active risk profile requires signal_score >= {self._min_score} to enter. SKIP freely below that threshold.
 """
@@ -236,19 +267,17 @@ Active risk profile requires signal_score >= {self._min_score} to enter. SKIP fr
         except json.JSONDecodeError:
             pass
 
-        # 4. Last resort — keyword detection only, no symbol
-        action = "SKIP"
-        for word in ["BUY", "SELL", "HOLD", "SKIP"]:
-            if word in raw_text.upper():
-                action = word
-                break
-
-        logger.warning(f"JSON parse failed — fell back to keyword '{action}'. Raw (200): {raw_text[:200]}")
+        # 4. Last resort — JSON extraction failed; always SKIP.
+        # Keyword detection is intentionally removed: Claude's prose frequently
+        # contains "BUY" in analytical sentences, causing a malformed trade with
+        # no symbol/prices. A missed opportunity costs nothing; a bad Alpaca
+        # order causes real errors. Log the raw response for diagnosis.
+        logger.warning(f"JSON parse failed — forced SKIP. Raw (200): {raw_text[:200]}")
         return {
-            "action": action,
+            "action": "SKIP",
             "symbol": None,
-            "reasoning": raw_text[:500],
-            "journal_entry": raw_text[:200],
+            "reasoning": f"[PARSE FAILURE — SKIP forced] {raw_text[:500]}",
+            "journal_entry": f"Decision parse failed; session skipped for safety. Raw: {raw_text[:200]}",
             "parse_error": True
         }
 
