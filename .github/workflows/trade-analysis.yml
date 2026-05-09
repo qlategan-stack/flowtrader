@@ -1,0 +1,91 @@
+name: FlowTrader — Daily Trade Analysis
+
+# Runs once per US trading-day morning (SAST early), reads the journal from
+# the flowtrader-dashboard repo (which is the authoritative store after the
+# CI sync wired up in trading-bot.yml step 11), generates a static HTML
+# report focused on FAILURES only, and pushes the report + a compact
+# tradeflow_status.json back to flowtrader-dashboard for hosting via
+# GitHub Pages and consumption by the Quintus workspace portal.
+
+on:
+  schedule:
+    # 04:00 UTC = 06:00 SAST. Tue–Sat covers Mon–Fri US trading sessions
+    # (each report runs the morning AFTER the trading day it analyses).
+    - cron: '0 4 * * 2-6'
+  workflow_dispatch:
+    inputs:
+      report_date:
+        description: 'Override report date (YYYY-MM-DD). Leave blank for auto.'
+        required: false
+        default: ''
+      no_claude:
+        description: 'Skip Claude lesson generation (saves API credits)'
+        type: boolean
+        default: false
+
+jobs:
+  analyse:
+    name: Generate report
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout trading-bot
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install anthropic python-dotenv
+
+      - name: Clone flowtrader-dashboard
+        env:
+          DASHBOARD_PUSH_TOKEN: ${{ secrets.DASHBOARD_PUSH_TOKEN }}
+        run: |
+          if [ -z "$DASHBOARD_PUSH_TOKEN" ]; then
+            echo "::error::DASHBOARD_PUSH_TOKEN secret not set — cannot generate report"
+            exit 1
+          fi
+          git clone --depth 1 \
+            "https://x-access-token:${DASHBOARD_PUSH_TOKEN}@github.com/qlategan-stack/flowtrader-dashboard.git" \
+            "$RUNNER_TEMP/dashboard"
+
+      - name: Generate report
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ARGS="--journal $RUNNER_TEMP/dashboard/journal/trades.jsonl"
+          ARGS="$ARGS --output-dir $RUNNER_TEMP/dashboard/trade-analysis"
+          ARGS="$ARGS --status-path $RUNNER_TEMP/dashboard/tradeflow_status.json"
+
+          if [ -n "${{ github.event.inputs.report_date }}" ]; then
+            ARGS="$ARGS --report-date ${{ github.event.inputs.report_date }}"
+          fi
+
+          if [ "${{ github.event.inputs.no_claude }}" = "true" ]; then
+            ARGS="$ARGS --no-claude"
+          fi
+
+          python scripts/generate_trade_analysis.py $ARGS
+
+      - name: Commit and push report
+        env:
+          DASHBOARD_PUSH_TOKEN: ${{ secrets.DASHBOARD_PUSH_TOKEN }}
+        run: |
+          cd "$RUNNER_TEMP/dashboard"
+          git config user.name  "FlowTrader CI"
+          git config user.email "ci@flowtrader.local"
+          git add trade-analysis/index.html tradeflow_status.json
+
+          if git diff --cached --quiet; then
+            echo "No changes to publish (report identical to last run)"
+            exit 0
+          fi
+
+          git commit -m "chore: trade-analysis report (run ${{ github.run_id }})"
+          git push origin main
