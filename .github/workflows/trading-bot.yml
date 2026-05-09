@@ -183,6 +183,46 @@ jobs:
           path: journal/
           key: journal-${{ runner.os }}-${{ github.run_id }}
 
+      # ── 11. Sync this run's journal entries to the dashboard repo ─────────
+      # Without this step, every cycle's journal lives only in the workflow
+      # cache + artifact, so the Streamlit dashboard (which reads the
+      # dashboard repo) never sees CI activity. Requires the user to add a
+      # DASHBOARD_PUSH_TOKEN secret with a PAT scoped for `repo` write access
+      # to qlategan-stack/flowtrader-dashboard. If the secret is missing the
+      # step skips with a warning instead of failing the run.
+      - name: Sync journal to flowtrader-dashboard repo
+        if: always()
+        env:
+          DASHBOARD_PUSH_TOKEN: ${{ secrets.DASHBOARD_PUSH_TOKEN }}
+        run: |
+          if [ -z "$DASHBOARD_PUSH_TOKEN" ]; then
+            echo "::warning::DASHBOARD_PUSH_TOKEN secret not set — skipping dashboard sync"
+            exit 0
+          fi
+
+          # Clone the dashboard repo (depth 1 — we only append, never replay history)
+          git clone --depth 1 \
+            "https://x-access-token:${DASHBOARD_PUSH_TOKEN}@github.com/qlategan-stack/flowtrader-dashboard.git" \
+            "$RUNNER_TEMP/dashboard"
+
+          # Merge journal entries (dedups by timestamp) and refresh bybit snapshot
+          python scripts/ci_sync_journal.py --dashboard-path "$RUNNER_TEMP/dashboard"
+
+          # Commit and push only if anything actually changed
+          cd "$RUNNER_TEMP/dashboard"
+          git config user.name  "FlowTrader CI"
+          git config user.email "ci@flowtrader.local"
+          git add journal/trades.jsonl journal/bybit_balance.json 2>/dev/null || true
+
+          if git diff --cached --quiet; then
+            echo "No journal changes to push"
+            exit 0
+          fi
+
+          MSG="chore: CI journal sync (run ${{ github.run_id }})"
+          git commit -m "$MSG"
+          git push origin main
+
   analyst:
     name: Daily Analyst Review
     runs-on: ubuntu-latest
