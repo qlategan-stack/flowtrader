@@ -362,22 +362,29 @@ def send_telegram_alert(text: str) -> None:
 
 
 def _send_analyst_telegram_notification(in_count: int, out_count: int):
-    """Send Telegram notification summarising the analyst run."""
+    """
+    Send Telegram notification summarising the analyst run.
+
+    Uses HTML parse mode (matches send_telegram_notification) instead of
+    MarkdownV2. MarkdownV2 requires escaping ~16 special characters and
+    silently fails the whole message when one slips through; HTML only
+    cares about &, <, > and is far more forgiving for free-form text.
+    """
     import requests
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         return
     message = (
-        f"*FlowTrader Analyst* — Daily Review Complete 🧠\n"
-        f"In\\-Strategy: {in_count} suggestion(s)\n"
-        f"Out\\-Strategy: {out_count} suggestion(s)\n"
+        f"<b>FlowTrader Analyst</b> — Daily Review Complete 🧠\n"
+        f"In-Strategy: {in_count} suggestion(s)\n"
+        f"Out-Strategy: {out_count} suggestion(s)\n"
         f"→ Review on the dashboard"
     )
     try:
         requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": message, "parse_mode": "MarkdownV2"},
+            json={"chat_id": chat_id, "text": message, "parse_mode": "HTML"},
             timeout=5,
         )
     except Exception as e:
