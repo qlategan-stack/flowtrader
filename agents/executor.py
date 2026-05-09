@@ -160,11 +160,16 @@ class OrderExecutor:
         stop_loss: float,
         account_value: float,
         current_positions: int,
-        day_pl: float
+        day_pl: float,
+        existing_qty: float = 0.0,
     ) -> tuple[bool, str]:
         """
         Guardrail validation against the active risk profile.
         SELL orders (closing existing positions) skip entry-only checks.
+
+        existing_qty: shares/units already held in this symbol. Non-zero
+        existing_qty blocks new BUYs — see check #1 below.
+
         Returns (is_valid, reason).
         """
         p = self.profile
@@ -188,12 +193,25 @@ class OrderExecutor:
             return True, "Exit checks passed"
 
         # ── Entry-only checks (BUY) ───────────────────────────────────────────
-        # 1. Max open positions
+        # 1. No-adds rule: never stack a BUY onto an existing position.
+        # Mean-reversion strategy enters once and exits at the mean — there is
+        # no legitimate "add to winner" path. Adding also breaks Alpaca bracket
+        # protection: a second bracket BUY on a held symbol silently cancels
+        # its own stop-loss leg the moment the parent fills, leaving the new
+        # quantity unprotected. Closing the existing position before re-entering
+        # is the only safe way.
+        if existing_qty > 0:
+            return False, (
+                f"Already hold {existing_qty:g} shares of {symbol}; bot does not add "
+                f"to existing positions. Close before re-entering."
+            )
+
+        # 2. Max open positions
         max_pos = p["max_open_positions"]
         if current_positions >= max_pos:
             return False, f"Max positions reached ({current_positions}/{max_pos})"
 
-        # 2. Position size check — profile cap AND hard absolute ceiling
+        # 3. Position size check — profile cap AND hard absolute ceiling
         order_value  = quantity * entry_price
         position_pct = order_value / account_value
         max_pos_pct  = min(p["max_position_pct"], HARD_MAX_POSITION_PCT)
@@ -201,16 +219,16 @@ class OrderExecutor:
             cap_reason = "hard cap" if HARD_MAX_POSITION_PCT < p["max_position_pct"] else "profile cap"
             return False, f"Position too large ({position_pct:.1%} of account, max {max_pos_pct:.0%} — {cap_reason})"
 
-        # 3. Minimum order value
+        # 4. Minimum order value
         min_val = p["min_order_value"]
         if order_value < min_val:
             return False, f"Order value too small (${order_value:.2f}, min ${min_val})"
 
-        # 4. Stop loss must be set for entries
+        # 5. Stop loss must be set for entries
         if not stop_loss or stop_loss <= 0:
             return False, "Stop loss not defined. Cannot place order."
 
-        # 5. Stop loss sanity check
+        # 6. Stop loss sanity check
         max_stop = p["max_stop_distance_pct"]
         stop_distance_pct = (entry_price - stop_loss) / entry_price
         if stop_distance_pct > max_stop:
@@ -340,6 +358,16 @@ class OrderExecutor:
                 f"({quantity*entry_price/account_value:.2%} of account, profile cap {p['max_position_pct']:.0%}, hard cap {HARD_MAX_POSITION_PCT:.0%})"
             )
 
+        # Existing-quantity lookup for the no-adds rule. Equities only — the
+        # Bybit balance dict doesn't expose per-symbol holdings the same way,
+        # and Bybit doesn't have Alpaca's bracket-OCO cancel issue.
+        existing_qty = 0.0
+        if not is_crypto:
+            for pos in (account.get("positions") or []):
+                if pos.get("symbol") == symbol:
+                    existing_qty = float(pos.get("qty", 0))
+                    break
+
         # ── Validate ──────────────────────────────────────────────────────────
         is_valid, reason = self.validate_order(
             symbol=symbol,
@@ -350,6 +378,7 @@ class OrderExecutor:
             account_value=account_value,
             current_positions=current_positions,
             day_pl=day_pl,
+            existing_qty=existing_qty,
         )
 
         if not is_valid:
