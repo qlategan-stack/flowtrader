@@ -1,162 +1,258 @@
 {
   "market_regime": {
-    "trend_or_range": "RANGING with mild bullish bias",
-    "mean_reversion_active": true,
-    "mean_reversion_note": "Mean reversion strategies are appropriate given VIX at 16.99, indicating stable, non-trending volatility. No extreme fear or greed signals to override standard strategy.",
-    "vix_value": 16.99,
-    "vix_interpretation": "NORMAL \u2014 VIX below 20 confirms healthy market conditions. Options premiums are moderate, spreads are manageable. No elevated tail-risk premium detected.",
-    "vix_position_sizing_guidance": "Standard position sizing is approved. No need to reduce exposure due to fear. Avoid oversizing \u2014 VIX near 17 does not imply complacency immunity. Cap individual positions at 5-7% of portfolio.",
-    "key_context": "S&P 500 ETFs drew massive inflows last week (IVV, VOO, SPY leading), suggesting institutional accumulation and broad market confidence. Geopolitical noise (US-Iran tensions, arms supply warnings) introduces headline risk. GDP growth at 2% is moderate \u2014 not recessionary, not euphoric. Crypto markets seeing speculative momentum (DOGE +12%, Trump 'Project Freedom' announcement) \u2014 not directly impactful to equity watchlist but signals risk-on sentiment."
+    "overall_trend": "TRENDING \u2014 equities in a strong uptrend with S&P 500 above 7,400 and Technology sector up 8.43% WoW. Broad market momentum is bullish but concentrated in tech.",
+    "mean_reversion_strategy": "PARTIALLY ACTIVE \u2014 mean reversion is suitable for lagging/oversold sectors (Energy, Utilities) but momentum chasing is the dominant edge this week. Avoid fading Tech strength. No mean-reversion candidates returned from the broader scan, so equity MR book should remain light.",
+    "vix_interpretation": "VIX at 18.16 is in the NORMAL range, indicating healthy market conditions with no elevated fear. This supports standard position sizing \u2014 no need to scale down. Options premiums are reasonable. Leverage caps remain at normal levels.",
+    "position_sizing_guidance": "Full standard sizing permitted. VIX 18 = no discount applied. Max single-name equity position: 5-8% of equity book. Sector ETF positions up to 10%."
   },
   "top_opportunities": [
     {
       "rank": 1,
-      "symbol": "SPY",
-      "strategy": "Mean Reversion / Momentum Continuation",
-      "rationale": "SPY ETF recorded massive institutional inflows last week per news data. VIX at 16.99 supports a stable, low-fear environment ideal for SPY mean reversion setups on intraday dips. Broad market breadth appears supportive. Any pullback to short-term moving averages (5-10 day) should be treated as a buy-the-dip opportunity.",
-      "signal_strength": "HIGH",
-      "sector_conditions": "Broad market \u2014 benefits from institutional inflow momentum and stable VIX.",
-      "position_size_adjustment": "Standard allocation. No increase recommended without confirmed sector data.",
-      "caution": "Monitor geopolitical headlines (Iran conflict, arms supply disruptions) for sudden risk-off moves."
+      "asset_class": "EQUITY",
+      "symbol": "XLK",
+      "direction": "LONG",
+      "rationale": "Technology sector surged 8.43% last week \u2014 the dominant sector by a wide margin. SPY and QQQ should track this strength. XLK is the purest expression. Momentum regime is confirmed, and with VIX at 18 there is no systemic fear to derail continuation. AI/semiconductor tailwind (NVDA, MSFT, AMD all in watchlist) amplifies the thesis.",
+      "catalysts": "S&P 500 above 7,400, Micron/Samsung news benefiting semis, JPMorgan BTC reversal signals institutional risk-on posture.",
+      "signal_strength": "STRONG \u2014 sector momentum + macro risk-on alignment",
+      "position_size_adjustment": "Standard to +10% above base given strong trend confirmation"
     },
     {
       "rank": 2,
-      "symbol": "QQQ",
-      "strategy": "Mean Reversion on Pullbacks",
-      "rationale": "Tech-heavy QQQ benefits from the same inflow tailwinds as SPY. Risk-on sentiment signaled by crypto rallies and broad equity inflows typically lifts growth/tech names. QQQ mean reversion setups on 1-2% dips toward the 10-day moving average are historically high probability in sub-20 VIX environments.",
-      "signal_strength": "MODERATE-HIGH",
-      "sector_conditions": "Technology sector data unavailable this week, but macro risk-on environment and low VIX favor growth equities.",
-      "position_size_adjustment": "Standard allocation. Consider scaling to 80% of normal size given absence of confirmed sector performance data.",
-      "caution": "Sector performance data is null this week \u2014 trade with slightly tighter stops until confirmed."
+      "asset_class": "EQUITY",
+      "symbol": "NVDA",
+      "direction": "LONG",
+      "rationale": "NVDA sits within the dominant Technology sector. Micron benefiting from Samsung trouble is a near-term read-through for the broader AI semiconductor complex. NVDA is the flagship holding and likely to receive disproportionate inflows as tech rotates higher. No earnings this week \u2014 clean to trade.",
+      "catalysts": "AI capex supercycle narrative intact, Samsung supply disruption benefiting US chip names, S&P 500 at highs creating index-buying pressure.",
+      "signal_strength": "MODERATE-STRONG \u2014 sector tailwind + catalyst alignment",
+      "position_size_adjustment": "Standard sizing; maintain stop below recent swing low"
     },
     {
       "rank": 3,
+      "asset_class": "EQUITY",
       "symbol": "GLD",
-      "strategy": "Defensive Mean Reversion / Hedge Play",
-      "rationale": "Geopolitical escalation signals (US-Iran blockade, $4.8B cost reported, Europe arms supply warnings) provide a structural bid under gold. GLD serves as both a mean reversion candidate if it has pulled back from recent highs AND a portfolio hedge against macro shock. In a VIX-normal environment, GLD tends to range-trade with identifiable support/resistance.",
-      "signal_strength": "MODERATE",
-      "sector_conditions": "Geopolitical risk elevated. Gold benefits from safe-haven demand without requiring full risk-off trigger.",
-      "position_size_adjustment": "Consider a slight overweight (up to 110% of standard GLD allocation) as a hedge against geopolitical tail risk this week.",
-      "caution": "If Iran tensions de-escalate rapidly, GLD may pull back sharply. Set stop-losses at 1.5% below entry."
+      "direction": "LONG",
+      "rationale": "Geopolitical risk is elevated: Iran war talks deadlocked, Trump meeting national security team on possible military action. SPR releasing record 1.22M bpd signals supply-side energy policy uncertainty. GLD is the natural safe-haven hedge in a risk-on/geopolitical-risk mixed environment. Copper hitting record highs (commodity supercycle signal) is broadly bullish for hard assets including gold.",
+      "catalysts": "Iran military action risk, record SPR release signaling energy market stress, commodity supercycle momentum, dollar uncertainty.",
+      "signal_strength": "MODERATE \u2014 geopolitical hedge + commodity strength backdrop",
+      "position_size_adjustment": "Standard sizing; treat as portfolio hedge, not primary alpha source"
+    },
+    {
+      "rank": 4,
+      "asset_class": "CRYPTO",
+      "symbol": "BTC/USDT",
+      "direction": "LONG",
+      "rationale": "BTC is in a confirmed TRENDING regime (ADX 31.56, well above 25 threshold). RSI at 67.65 is elevated but not yet in overbought exhaustion territory. Price holding above $80K is technically constructive. BTC dominance at 58.36% confirms BTC is absorbing market flows \u2014 this is a BTC-led cycle phase. Scanner scored it 0 signals for MR, but the TRENDING regime makes it the preferred directional long in crypto.",
+      "catalysts": "JPMorgan Bitcoin reversal (institutional validation), Eric Trump $1M BTC prediction (retail sentiment fuel), BTC holding $80K support, institutional risk-on environment.",
+      "signal_strength": "MODERATE \u2014 trending regime confirmed, no MR signal needed for momentum approach",
+      "position_size_adjustment": "Standard sizing; this is a momentum/directional hold, not a mean-reversion entry"
+    },
+    {
+      "rank": 5,
+      "asset_class": "CRYPTO",
+      "symbol": "SOL/USDT",
+      "direction": "LONG",
+      "rationale": "Highest-quality crypto MR setup at C_GRADE (best available). RSI at 74.91 and BB% at 1.125 indicate stretched conditions \u2014 monitor for pullback entry rather than chasing. Hurst at 0.48 (anti-persistent) and ADX below 25 (ranging) suggest mean reversion is valid. Wait for RSI to pull back below 65 before initiating. Volume at $78.8M USDT is adequate for liquidity.",
+      "catalysts": "Ranging market creates MR opportunity on dips; SOL has relative strength vs other alts in current BTC-led regime.",
+      "signal_strength": "LOW-MODERATE (C_GRADE) \u2014 do not chase at current levels; set limit orders on pullback",
+      "position_size_adjustment": "Reduced sizing \u2014 50-60% of standard crypto allocation due to C_GRADE quality and overbought RSI"
+    },
+    {
+      "rank": 6,
+      "asset_class": "CRYPTO",
+      "symbol": "ETH/USDT",
+      "direction": "LONG",
+      "rationale": "ETH is the cleanest technical setup for mean reversion in crypto \u2014 RSI at 54.49 (neutral, not overbought), BB% at 0.655 (mid-band, not extended), MA20 deviation only 0.91% (tightly coiled). Despite a SKIP signal score (only 1), ETH represents a low-risk accumulation zone. High liquidity ($278M USDT 24h volume) makes execution clean. If BTC continues to lead, ETH historically follows with leverage.",
+      "catalysts": "ETH dominance at 10.03% \u2014 any rotation from BTC to alts would disproportionately benefit ETH. Tightly coiled price action near MA20 is a coiled spring setup.",
+      "signal_strength": "LOW \u2014 SKIP rating, but best risk/reward profile in crypto universe given neutral RSI and tight deviation",
+      "position_size_adjustment": "Reduced sizing \u2014 40-50% of standard; treat as speculative accumulation only"
     }
   ],
   "watchlist_changes": {
-    "symbols_to_add": [],
-    "add_rationale": "Broader universe scan returned no candidates this week (empty dataset). No additions are recommended without supporting scan data. Do not add symbols speculatively.",
-    "symbols_to_remove": [],
-    "remove_rationale": "No removal triggers identified. All current watchlist symbols (NVDA, AAPL, MSFT, QQQ, SPY, AMD, GLD) remain appropriate. Sector data is null, so no performance-based removal is warranted.",
-    "symbols_to_reduce_weighting": [
-      {
-        "symbol": "AMD",
-        "reason": "No scan data or sector confirmation this week. AMD is higher-beta and more sensitive to tech sector rotation. Reduce to 70% of standard weighting until sector data confirms conditions."
-      },
-      {
-        "symbol": "NVDA",
-        "reason": "Similar to AMD \u2014 high beta, no sector performance confirmation available. Maintain on watchlist but trade smaller size until XLK data is available."
-      }
-    ],
-    "symbols_to_avoid_earnings": [],
-    "earnings_note": "No earnings events flagged this week. Standard trading on all watchlist symbols is permitted from an earnings-risk perspective. Verify individually via earnings calendar before market open Monday."
+    "equity": {
+      "add": [
+        {
+          "symbol": "XLK",
+          "reason": "Top performing sector ETF (+8.43% WoW), direct exposure to dominant tech momentum; not currently on watchlist"
+        },
+        {
+          "symbol": "COPX",
+          "reason": "Copper hitting record highs per news \u2014 copper miners ETF captures commodity supercycle theme without single-stock risk"
+        }
+      ],
+      "remove": [
+        {
+          "symbol": "USO",
+          "reason": "Energy sector worst performer (-5.35% WoW), record SPR release depressing oil prices, structural headwind from Trump energy policy. Risk/reward unfavorable. Remove from active trading; retain only as macro monitor."
+        }
+      ],
+      "avoid_earnings": [],
+      "avoid_other": [
+        {
+          "symbol": "XLE",
+          "reason": "Energy sector ETF down 5.35% \u2014 do not initiate new longs until energy stabilizes"
+        },
+        {
+          "symbol": "XLU",
+          "reason": "Utilities down 3.93% in risk-on environment \u2014 avoid defensive sectors while momentum is in tech"
+        }
+      ]
+    },
+    "crypto": {
+      "add": [],
+      "remove": [
+        {
+          "symbol": "DOT/USDT",
+          "reason": "Signal score 0, SKIP quality, low volume ($3.05M USDT), conflicting signals (ranging ADX but trending Hurst). Poor liquidity and no edge \u2014 remove from active scanning"
+        }
+      ],
+      "avoid": [
+        {
+          "symbol": "NEAR/USDT",
+          "reason": "Down 3.51% in 24h, SKIP quality, lowest momentum in the scan. Hurst 0.73 suggests trending DOWN, not suitable for LONG-only spot bot"
+        }
+      ]
+    }
   },
   "sector_focus": {
-    "best_mean_reversion_sectors": [
-      {
-        "sector": "Broad Market (SPY/QQQ proxy)",
-        "reason": "Massive ETF inflows signal institutional conviction. Mean reversion setups on dips are highest probability in this environment with VIX at 16.99.",
-        "recommended_etfs": [
-          "SPY",
-          "QQQ"
-        ]
-      },
-      {
-        "sector": "Materials / Commodities (via GLD)",
-        "reason": "Geopolitical risk premium supports gold and commodity-linked assets. GLD offers a clean range-trade setup with macro hedge properties.",
-        "recommended_etfs": [
-          "GLD",
-          "XLB"
-        ]
-      },
-      {
-        "sector": "Financials",
-        "reason": "With GDP at 2% and stable VIX, financial conditions are supportive for XLF. No inverted yield curve signals in evidence. Financials tend to perform well in moderate growth, low-fear environments.",
-        "recommended_etfs": [
-          "XLF"
-        ]
-      }
-    ],
-    "sectors_to_avoid_or_underweight": [
+    "best_mean_reversion_conditions": [
       {
         "sector": "Energy (XLE)",
-        "reason": "Iran conflict and US arms warnings create binary risk for energy prices. Geopolitical escalation could spike oil (benefiting XLE) or trigger broader risk-off (hurting XLE equities). Too much uncertainty for clean mean reversion setups."
+        "etf": "XLE",
+        "rationale": "Down 5.35% WoW \u2014 the most oversold sector. Record SPR release is likely a near-term event; energy demand fundamentals haven't collapsed. Watch for stabilization signal before entry. Iran geopolitical risk could rapidly reverse oil lower-or-higher. High risk, potential high reward on MR bounce. Wait for RSI confirmation before entering.",
+        "action": "WATCH \u2014 do not enter yet; set price alerts for stabilization"
       },
       {
-        "sector": "Consumer Discretionary (XLY)",
-        "reason": "76% voter disapproval on cost of living, elevated gas prices, and weak consumer sentiment signals are headwinds. Discretionary spending pressure makes XLY setups less reliable this week."
+        "sector": "Utilities (XLU)",
+        "etf": "XLU",
+        "rationale": "Down 3.93% WoW as risk-on rotation out of defensives intensified. If AI power demand narrative re-emerges (data center electricity consumption), XLU could snap back sharply. Current weakness is technically overdone vs. fundamentals.",
+        "action": "LIGHT WATCH \u2014 small speculative MR position only if XLU approaches 52-week support levels"
       },
       {
-        "sector": "Crypto-adjacent equities",
-        "reason": "DOGE +12%, crypto speculation elevated. Meme-driven momentum (GameStop/eBay rumor, Trump crypto announcements) introduces high noise-to-signal ratio. Avoid any crypto-adjacent names not on core watchlist."
+        "sector": "Healthcare (XLV)",
+        "etf": "XLV",
+        "rationale": "Down 1.15% WoW with FDA Commissioner firing adding headline risk. However, the selloff is moderate and healthcare tends to be resilient. Policy uncertainty may be overstated short-term.",
+        "action": "NEUTRAL WATCH \u2014 avoid new longs until FDA leadership clarity resolves"
       }
     ],
-    "sector_data_caveat": "CRITICAL: All sector ETF weekly change data is null this week. Sector assessments above are based on macro context and news flow only. Confirm with live sector data before executing sector-specific trades Monday morning."
+    "avoid_or_underweight": [
+      {
+        "sector": "Technology (XLK)",
+        "reason": "Do NOT fade tech momentum \u2014 8.43% move means MR short would fight the primary trend. Tech is for MOMENTUM longs only this week, not mean reversion."
+      },
+      {
+        "sector": "Financials (XLF)",
+        "reason": "Down 1.31% WoW with no clear catalyst for reversal. Avoid until banking/rate environment clarifies."
+      }
+    ]
+  },
+  "crypto_outlook": {
+    "regime": "BTC-led",
+    "mean_reversion_active_crypto": true,
+    "sentiment_read": "Fear & Greed at 48 (Neutral) with only +1 day-over-day change indicates no speculative froth or panic \u2014 a stable, non-euphoric environment where mean reversion signals can be trusted. The neutral reading gives the bot room to operate MR strategies without fighting a euphoric or fearful crowd.",
+    "dominance_read": "BTC dominance at 58.36% is elevated and BTC is absorbing the lion's share of market flows. This is a classic BTC accumulation/consolidation phase where alts underperform. Altcoin MR setups should be sized conservatively; prioritize BTC-correlated trades and only take alt positions with clear technical setups.",
+    "top_crypto_opportunities": [
+      {
+        "rank": 1,
+        "symbol": "BTC/USDT",
+        "direction": "LONG",
+        "current_price": 82073.8,
+        "rationale": "Confirmed trending regime (ADX 31.56), RSI 67.65 not yet overbought, holding above $80K psychological support. Institutional tailwinds from JPMorgan reversal. Primary beneficiary of BTC-led regime. Momentum approach \u2014 hold or accumulate on any dip to $78K-$80K range.",
+        "entry_note": "Current levels acceptable for momentum position; ideal add on 3-5% pullback to $78K support",
+        "risk": "RSI approaching overbought; Iran escalation could trigger broad risk-off"
+      },
+      {
+        "rank": 2,
+        "symbol": "SOL/USDT",
+        "direction": "LONG",
+        "current_price": 97.9,
+        "rationale": "C_GRADE MR setup \u2014 best quality available in alt space. Anti-persistent Hurst (0.48) and ranging ADX confirm MR edge. Do NOT chase at $97.9 with RSI 74.91 and BB% 1.125 (extended). Set limit orders at $90-$92 range (approx. MA20 reversion target). Volume sufficient at $78.8M USDT.",
+        "entry_note": "LIMIT ORDER ONLY at $90-$92; do not market buy at current overbought levels",
+        "risk": "If BTC breaks down, SOL may fall faster than MR model predicts"
+      },
+      {
+        "rank": 3,
+        "symbol": "ETH/USDT",
+        "direction": "LONG",
+        "current_price": 2343.47,
+        "rationale": "Lowest technical risk in the crypto universe \u2014 RSI neutral at 54.49, BB% at 0.655 (mid-band), MA20 deviation only 0.91%. Coiled price action near MA20 with highest liquidity in the scan ($278M USDT volume). If BTC rally broadens to alts, ETH is the highest-quality first recipient. Accumulation zone.",
+        "entry_note": "Near-current-price accumulation acceptable given neutral technicals; small position sizing",
+        "risk": "SKIP signal rating \u2014 no confirmed setup; purely speculative accumulation play"
+      }
+    ],
+    "crypto_risk_warnings": [
+      {
+        "event": "Iran Military Action Risk",
+        "severity": "HIGH",
+        "detail": "Trump meeting national security team Monday to discuss resuming military strikes on Iran after negotiations deadlocked. Escalation would trigger broad risk-off, likely causing BTC to drop 5-15% rapidly. All crypto positions should have hard stops in place before Monday's NSC meeting outcome."
+      },
+      {
+        "event": "BTC RSI Overbought Proximity",
+        "severity": "MEDIUM",
+        "detail": "BTC RSI at 67.65, approaching overbought territory (70+). SOL RSI already at 74.91, LINK at 72.34. Multiple assets simultaneously near overbought \u2014 risk of synchronized pullback if BTC fails to hold $80K on any test."
+      },
+      {
+        "event": "Record SPR Release / Oil Price Shock",
+        "severity": "MEDIUM",
+        "detail": "Largest-ever weekly SPR release (1.22M bpd) signals administration concern about oil prices. Energy sector collapse (-5.35%) could spread to broader risk sentiment if it signals economic slowdown fears."
+      },
+      {
+        "event": "BTC Dominance Peak Risk",
+        "severity": "LOW-MEDIUM",
+        "detail": "BTC dominance at 58.36% is elevated. If dominance peaks and rotates to alts, BTC could consolidate while alts spike. The bot should not be caught fully long BTC with no alt exposure if rotation begins."
+      },
+      {
+        "event": "FDA Commissioner Firing",
+        "severity": "LOW",
+        "detail": "Policy uncertainty at FDA could create volatility in biotech/healthcare names but unlikely to directly impact crypto markets."
+      }
+    ]
   },
   "risk_warnings": {
-    "macro_events": [
+    "macro_events_this_week": [
       {
-        "event": "US-Iran Geopolitical Escalation",
-        "risk_level": "ELEVATED",
-        "detail": "US blockade has cost Iran $4.8B per Pentagon. US warning Europe of arms shipment delays signals active conflict escalation risk. A sudden military event could trigger rapid VIX spike and broad risk-off. Monitor oil prices at open daily.",
-        "affected_symbols": [
-          "GLD",
-          "XLE",
-          "SPY",
-          "QQQ"
-        ]
+        "event": "US-Iran Military Action Decision",
+        "timing": "Monday NSC Meeting",
+        "severity": "CRITICAL",
+        "detail": "If Trump approves military action against Iran, expect: oil spike (+10-20%), equity selloff (S&P -2 to -5%), gold surge, BTC drop. Position all books with this tail risk in mind. Consider holding GLD as explicit hedge."
       },
       {
-        "event": "GDP at 2% / Gas Price Surge",
-        "risk_level": "MODERATE",
-        "detail": "US GDP growth at 2% is positive but gas price surge could dampen consumer spending and feed into stagflation narrative if sustained. Watch for consumer confidence data releases this week.",
-        "affected_symbols": [
-          "XLY",
-          "XLP",
-          "SPY"
-        ]
+        "event": "Record SPR Release Implications",
+        "timing": "This week \u2014 ongoing",
+        "severity": "HIGH",
+        "detail": "The largest-ever SPR weekly release signals administration is actively suppressing oil prices. Energy sector already down 5.35%. USO and XLE longs are dangerous. Watch for secondary inflation/deflation signal."
       },
       {
-        "event": "Crypto Market Speculation Spillover",
-        "risk_level": "LOW-MODERATE",
-        "detail": "Trump 'Project Freedom' crypto announcement and DOGE +12% whale activity could drive short-term risk appetite rotation away from equities into crypto. Monitor for unusual equity outflows mid-week.",
-        "affected_symbols": [
-          "QQQ",
-          "NVDA",
-          "AMD"
-        ]
+        "event": "S&P 500 at 7,400 \u2014 Potential Resistance",
+        "timing": "This week",
+        "severity": "MEDIUM",
+        "detail": "S&P 500 touching new highs at 7,400 may attract profit-taking. Tech sector up 8.43% in one week is an aggressive move that could see consolidation. Momentum is strong but don't ignore extended valuation risk."
       },
       {
-        "event": "GameStop / Meme Stock Activity",
-        "risk_level": "LOW",
-        "detail": "GameStop reportedly eyeing eBay takeover for $100B valuation. This is speculative noise but could cause short-term volatility contagion if meme momentum builds. Not a direct risk to watchlist but monitor sentiment.",
-        "affected_symbols": []
+        "event": "Copper at Record Highs",
+        "timing": "This week",
+        "severity": "MEDIUM",
+        "detail": "Commodity supercycle signal. Positive for materials, infrastructure, and risk assets broadly. But commodity spikes historically precede central bank tightening responses \u2014 monitor Fed speak this week."
       }
     ],
     "specific_risk_flags": [
-      "SECTOR DATA NULL: All weekly sector performance values are null. The trading bot must NOT make sector-rotation decisions based on this week's brief alone. Require live data confirmation before sector ETF trades.",
-      "BROADER SCAN EMPTY: No mean reversion candidates surfaced from universe scan. This limits opportunity identification. Bot should rely on existing watchlist only.",
-      "GEOPOLITICAL BINARY: Iran conflict is a binary risk event. If escalation occurs mid-week, immediately reduce all equity exposure by 30% and increase GLD weighting.",
-      "EARNINGS VERIFICATION: Earnings list returned empty from data feed. Independently verify NVDA, AAPL, MSFT, AMD earnings dates via official calendar before Monday open \u2014 do not rely solely on this brief's null earnings data."
+      "Iran escalation is the #1 tail risk \u2014 hard stops mandatory on all positions before Monday NSC meeting",
+      "Do not size up into tech momentum without trailing stop protection \u2014 8.43% weekly move is unsustainable near-term",
+      "Crypto altcoins showing RSI divergence (SOL 74.91, LINK 72.34) \u2014 avoid chasing; wait for pullback entries",
+      "No earnings this week \u2014 clean of earnings risk, but geopolitical headline risk is elevated",
+      "Energy sector (XLE, USO) \u2014 avoid all new longs given policy headwinds and SPR release pressure",
+      "BTC holding $80K is the critical support \u2014 a break below $78K would invalidate bullish crypto thesis"
     ],
-    "recommended_max_position_size": {
-      "vix_level": 16.99,
-      "max_single_position_pct": 7.0,
-      "max_sector_concentration_pct": 20.0,
-      "rationale": "VIX at 16.99 supports standard sizing. Cap individual positions at 7% of portfolio. Given null sector data and active geopolitical risk, avoid concentration above 20% in any single sector.",
-      "stop_loss_recommendation": "1.5% - 2.0% below entry on all positions given normal volatility regime."
+    "max_position_size_guidance": {
+      "vix_level": 18.16,
+      "equity_max_single_name": "7% of equity book",
+      "equity_max_sector_etf": "10% of equity book",
+      "crypto_max_single_pair": "8% of crypto book",
+      "overall_note": "VIX at 18 = standard sizing. Iran risk warrants keeping 10-15% of total book in cash/GLD as tail hedge. Do not deploy full capital in trending momentum names without stop-loss discipline."
     }
   },
-  "confidence_score": 5,
-  "confidence_reason": "VIX conditions are healthy and market inflow signals are bullish, but critically absent sector performance data, an empty broader universe scan, unverified earnings calendar, and active geopolitical risk (US-Iran escalation) reduce analytical confidence significantly \u2014 the trading bot should operate at reduced position sizes and require live data confirmation before executing trades.",
-  "generated_at": "2026-05-04T03:04:10.770225-04:00",
-  "valid_until": "2026-05-11T03:04:10.770225-04:00",
-  "raw_analysis": "```json\n{\n  \"market_regime\": {\n    \"trend_or_range\": \"RANGING with mild bullish bias\",\n    \"mean_reversion_active\": true,\n    \"mean_reversion_note\": \"Mean reversion strategies are appropriate given VIX at 16.99, indicating stable, non-trending volatility. No extreme fear or greed signals to override standard strategy.\",\n    \"vix_value\": 16.99,\n    \"vix_interpretation\": \"NORMAL \u2014 VIX below 20 confirms healthy market conditions. Options premiums are moderate, spreads are manageable. No elevated tail-risk premium detected.\",\n    \"vix_position_sizing_guidance\": \"Standard position sizing is approved. No need to reduce exposure due to fear. Avoid oversizing \u2014 VIX near 17 does not imply complacency immunity. Cap individual positions at 5-7% of portfolio.\",\n    \"key_context\": \"S&P 500 ETFs drew massive inflows last week (IVV, VOO, SPY leading), suggesting institutional accumulation and broad market confidence. Geopolitical noise (US-Iran tensions, arms supply warnings) introduces headline risk. GDP growth at 2% is moderate \u2014 not recessionary, not euphoric. Crypto markets seeing speculative momentum (DOGE +12%, Trump 'Project Freedom' announcement) \u2014 not directly impactful to equity watchlist but signals risk-on sentiment.\"\n  },\n  \"top_opportunities\": [\n    {\n      \"rank\": 1,\n      \"symbol\": \"SPY\",\n      \"strategy\": \"Mean Reversion / Momentum Continuation\",\n      \"rationale\": \"SPY ETF recorded massive institutional inflows last week per news data. VIX at 16.99 supports a stable, low-fear environment ideal for SPY mean reversion setups on intraday dips. Broad market breadth appears supportive. Any pullback to short-term moving averages (5-10 day) should be treated as a buy-the-dip opportunity.\",\n      \"signal_strength\": \"HIGH\",\n      \"sector_conditions\": \"Broad market \u2014 benefits from institutional inflow momentum and stable VIX.\",\n      \"position_size_adjustment\": \"Standard allocation. No increase recommended without confirmed sector data.\",\n      \"caution\": \"Monitor geopolitical headlines (Iran conflict, arms supply disruptions) for sudden risk-off moves.\"\n    },\n    {\n      \"rank\": 2,\n      \"symbol\": \"QQQ\",\n      \"strategy\": \"Mean Reversion on Pullbacks\",\n      \"rationale\": \"Tech-heavy QQQ benefits from the same inflow tailwinds as SPY. Risk-on sentiment signaled by crypto rallies and broad equity inflows typically lifts growth/tech names. QQQ mean reversion setups on 1-2% dips toward the 10-day moving average are historically high probability in sub-20 VIX environments.\",\n      \"signal_strength\": \"MODERATE-HIGH\",\n      \"sector_conditions\": \"Technology sector data unavailable this week, but macro risk-on environment and low VIX favor growth equities.\",\n      \"position_size_adjustment\": \"Standard allocation. Consider scaling to 80% of normal size given absence of confirmed sector performance data.\",\n      \"caution\": \"Sector performance data is null this week \u2014 trade with slightly tighter stops until confirmed.\"\n    },\n    {\n      \"rank\": 3,\n      \"symbol\": \"GLD\",\n      \"strategy\": \"Defensive Mean Reversion / Hedge Play\",\n      \"rationale\": \"Geopolitical escalation signals (US-Iran blockade, $4.8B cost reported, Europe arms supply warnings) provide a structural bid under gold. GLD serves as both a mean reversion candidate if it has pulled back from recent highs AND a portfolio hedge against macro shock. In a VIX-normal environment, GLD tends to range-trade with identifiable support/resistance.\",\n      \"signal_strength\": \"MODERATE\",\n      \"sector_conditions\": \"Geopolitical risk elevated. Gold benefits from safe-haven demand without requiring full risk-off trigger.\",\n      \"position_size_adjustment\": \"Consider a slight overweight (up to 110% of standard GLD allocation) as a hedge against geopolitical tail risk this week.\",\n      \"caution\": \"If Iran tensions de-escalate rapidly, GLD may pull back sharply. Set stop-losses at 1.5% below entry.\"\n    }\n  ],\n  \"watchlist_changes\": {\n    \"symbols_to_add\": [],\n    \"add_rationale\": \"Broader universe scan returned no candidates this week (empty dataset). No additions are recommended without supporting scan data. Do not add symbols speculatively.\",\n    \"symbols_to_remove\": [],\n    \"remove_rationale\": \"No removal triggers identified. All current watchlist symbols (NVDA, AAPL, MSFT, QQQ, SPY, AMD, GLD) remain appropriate. Sector data is null, so no performance-based removal is warranted.\",\n    \"symbols_to_reduce_weighting\": [\n      {\n        \"symbol\": \"AMD\",\n        \"reason\": \"No scan data or sector confirmation this week. AMD is higher-beta and more sensitive to tech sector rotation. Reduce to 70% of standard weighting until sector data confirms conditions.\"\n      },\n      {\n        \"symbol\": \"NVDA\",\n        \"reason\": \"Similar to AMD \u2014 high beta, no sector performance confirmation available. Maintain on watchlist but trade smaller size until XLK data is available.\"\n      }\n    ],\n    \"symbols_to_avoid_earnings\": [],\n    \"earnings_note\": \"No earnings events flagged this week. Standard trading on all watchlist symbols is permitted from an earnings-risk perspective. Verify individually via earnings calendar before market open Monday.\"\n  },\n  \"sector_focus\": {\n    \"best_mean_reversion_sectors\": [\n      {\n        \"sector\": \"Broad Market (SPY/QQQ proxy)\",\n        \"reason\": \"Massive ETF inflows signal institutional conviction. Mean reversion setups on dips are highest probability in this environment with VIX at 16.99.\",\n        \"recommended_etfs\": [\"SPY\", \"QQQ\"]\n      },\n      {\n        \"sector\": \"Materials / Commodities (via GLD)\",\n        \"reason\": \"Geopolitical risk premium supports gold and commodity-linked assets. GLD offers a clean range-trade setup with macro hedge properties.\",\n        \"recommended_etfs\": [\"GLD\", \"XLB\"]\n      },\n      {\n        \"sector\": \"Financials\",\n        \"reason\": \"With GDP at 2% and stable VIX, financial conditions are supportive for XLF. No inverted yield curve signals in evidence. Financials tend to perform well in moderate growth, low-fear environments.\",\n        \"recommended_etfs\": [\"XLF\"]\n      }\n    ],\n    \"sectors_to_avoid_or_underweight\": [\n      {\n        \"sector\": \"Energy (XLE)\",\n        \"reason\": \"Iran conflict and US arms warnings create binary risk for energy prices. Geopolitical escalation could spike oil (benefiting XLE) or trigger broader risk-off (hurting XLE equities). Too much uncertainty for clean mean reversion setups.\"\n      },\n      {\n        \"sector\": \"Consumer Discretionary (XLY)\",\n        \"reason\": \"76% voter disapproval on cost of living, elevated gas prices, and weak consumer sentiment signals are headwinds. Discretionary spending pressure makes XLY setups less reliable this week.\"\n      },\n      {\n        \"sector\": \"Crypto-adjacent equities\",\n        \"reason\": \"DOGE +12%, crypto speculation elevated. Meme-driven momentum (GameStop/eBay rumor, Trump crypto announcements) introduces high noise-to-signal ratio. Avoid any crypto-adjacent names not on core watchlist.\"\n      }\n    ],\n    \"sector_data_caveat\": \"CRITICAL: All sector ETF weekly change data is null this week. Sector assessments above are based on macro context and news flow only. Confirm with live sector data before executing sector-specific trades Monday morning.\"\n  },\n  \"risk_warnings\": {\n    \"macro_events\": [\n      {\n        \"event\": \"US-Iran Geopolitical Escalation\",\n        \"risk_level\": \"ELEVATED\",\n        \"detail\": \"US blockade has cost Iran $4.8B per Pentagon. US warning Europe of arms shipment delays signals active conflict escalation risk. A sudden military event could trigger rapid VIX spike and broad risk-off. Monitor oil prices at open daily.\",\n        \"affected_symbols\": [\"GLD\", \"XLE\", \"SPY\", \"QQQ\"]\n      },\n      {\n        \"event\": \"GDP at 2% / Gas Price Surge\",\n        \"risk_level\": \"MODERATE\",\n        \"detail\": \"US GDP growth at 2% is positive but gas price surge could dampen consumer spending and feed into stagflation narrative if sustained. Watch for consumer confidence data releases this week.\",\n        \"affected_symbols\": [\"XLY\", \"XLP\", \"SPY\"]\n      },\n      {\n        \"event\": \"Crypto Market Speculation Spillover\",\n        \"risk_level\": \"LOW-MODERATE\",\n        \"detail\": \"Trump 'Project Freedom' crypto announcement and DOGE +12% whale activity could drive short-term risk appetite rotation away from equities into crypto. Monitor for unusual equity outflows mid-week.\",\n        \"affected_symbols\": [\"QQQ\", \"NVDA\", \"AMD\"]\n      },\n      {\n        \"event\": \"GameStop / Meme Stock Activity\",\n        \"risk_level\": \"LOW\",\n        \"detail\": \"GameStop reportedly eyeing eBay takeover for $100B valuation. This is speculative noise but could cause short-term volatility contagion if meme momentum builds. Not a direct risk to watchlist but monitor sentiment.\",\n        \"affected_symbols\": []\n      }\n    ],\n    \"specific_risk_flags\": [\n      \"SECTOR DATA NULL: All weekly sector performance values are null. The trading bot must NOT make sector-rotation decisions based on this week's brief alone. Require live data confirmation before sector ETF trades.\",\n      \"BROADER SCAN EMPTY: No mean reversion candidates surfaced from universe scan. This limits opportunity identification. Bot should rely on existing watchlist only.\",\n      \"GEOPOLITICAL BINARY: Iran conflict is a binary risk event. If escalation occurs mid-week, immediately reduce all equity exposure by 30% and increase GLD weighting.\",\n      \"EARNINGS VERIFICATION: Earnings list returned empty from data feed. Independently verify NVDA, AAPL, MSFT, AMD earnings dates via official calendar before Monday open \u2014 do not rely solely on this brief's null earnings data.\"\n    ],\n    \"recommended_max_position_size\": {\n      \"vix_level\": 16.99,\n      \"max_single_position_pct\": 7.0,\n      \"max_sector_concentration_pct\": 20.0,\n      \"rationale\": \"VIX at 16.99 supports standard sizing. Cap individual positions at 7% of portfolio. Given null sector data and active geopolitical risk, avoid concentration above 20% in any single sector.\",\n      \"stop_loss_recommendation\": \"1.5% - 2.0% below entry on all positions given normal volatility regime.\"\n    }\n  },\n  \"confidence_score\": 5,\n  \"confidence_reason\": \"VIX conditions are healthy and market inflow signals are bullish, but critically absent sector performance data, an empty broader universe scan, unverified earnings calendar, and active geopolitical risk (US-Iran escalation) reduce analytical confidence significantly \u2014 the trading bot should operate at reduced position sizes and require live data confirmation before executing trades.\",\n  \"generated_at\": \"2026-05-04T20:00:00Z\",\n  \"valid_until\": \"2026-05-08T21:00:00Z\"\n}\n```"
+  "confidence_score": 6,
+  "confidence_reason": "Equity conditions are bullish (VIX 18, S&P at highs, tech momentum strong) but crypto setups are weak (no A/B grade signals, all SKIP or C_GRADE, BTC-led regime limiting alt opportunities), and Iran military action risk on Monday creates a meaningful binary tail event that warrants holding cash reserves and keeping position sizes disciplined rather than pressing full allocation.",
+  "generated_at": "2026-05-11T14:11:28.372849-04:00",
+  "valid_until": "2026-05-18T14:11:28.372849-04:00",
+  "raw_analysis": "```json\n{\n  \"market_regime\": {\n    \"overall_trend\": \"TRENDING \u2014 equities in a strong uptrend with S&P 500 above 7,400 and Technology sector up 8.43% WoW. Broad market momentum is bullish but concentrated in tech.\",\n    \"mean_reversion_strategy\": \"PARTIALLY ACTIVE \u2014 mean reversion is suitable for lagging/oversold sectors (Energy, Utilities) but momentum chasing is the dominant edge this week. Avoid fading Tech strength. No mean-reversion candidates returned from the broader scan, so equity MR book should remain light.\",\n    \"vix_interpretation\": \"VIX at 18.16 is in the NORMAL range, indicating healthy market conditions with no elevated fear. This supports standard position sizing \u2014 no need to scale down. Options premiums are reasonable. Leverage caps remain at normal levels.\",\n    \"position_sizing_guidance\": \"Full standard sizing permitted. VIX 18 = no discount applied. Max single-name equity position: 5-8% of equity book. Sector ETF positions up to 10%.\"\n  },\n\n  \"top_opportunities\": [\n    {\n      \"rank\": 1,\n      \"asset_class\": \"EQUITY\",\n      \"symbol\": \"XLK\",\n      \"direction\": \"LONG\",\n      \"rationale\": \"Technology sector surged 8.43% last week \u2014 the dominant sector by a wide margin. SPY and QQQ should track this strength. XLK is the purest expression. Momentum regime is confirmed, and with VIX at 18 there is no systemic fear to derail continuation. AI/semiconductor tailwind (NVDA, MSFT, AMD all in watchlist) amplifies the thesis.\",\n      \"catalysts\": \"S&P 500 above 7,400, Micron/Samsung news benefiting semis, JPMorgan BTC reversal signals institutional risk-on posture.\",\n      \"signal_strength\": \"STRONG \u2014 sector momentum + macro risk-on alignment\",\n      \"position_size_adjustment\": \"Standard to +10% above base given strong trend confirmation\"\n    },\n    {\n      \"rank\": 2,\n      \"asset_class\": \"EQUITY\",\n      \"symbol\": \"NVDA\",\n      \"direction\": \"LONG\",\n      \"rationale\": \"NVDA sits within the dominant Technology sector. Micron benefiting from Samsung trouble is a near-term read-through for the broader AI semiconductor complex. NVDA is the flagship holding and likely to receive disproportionate inflows as tech rotates higher. No earnings this week \u2014 clean to trade.\",\n      \"catalysts\": \"AI capex supercycle narrative intact, Samsung supply disruption benefiting US chip names, S&P 500 at highs creating index-buying pressure.\",\n      \"signal_strength\": \"MODERATE-STRONG \u2014 sector tailwind + catalyst alignment\",\n      \"position_size_adjustment\": \"Standard sizing; maintain stop below recent swing low\"\n    },\n    {\n      \"rank\": 3,\n      \"asset_class\": \"EQUITY\",\n      \"symbol\": \"GLD\",\n      \"direction\": \"LONG\",\n      \"rationale\": \"Geopolitical risk is elevated: Iran war talks deadlocked, Trump meeting national security team on possible military action. SPR releasing record 1.22M bpd signals supply-side energy policy uncertainty. GLD is the natural safe-haven hedge in a risk-on/geopolitical-risk mixed environment. Copper hitting record highs (commodity supercycle signal) is broadly bullish for hard assets including gold.\",\n      \"catalysts\": \"Iran military action risk, record SPR release signaling energy market stress, commodity supercycle momentum, dollar uncertainty.\",\n      \"signal_strength\": \"MODERATE \u2014 geopolitical hedge + commodity strength backdrop\",\n      \"position_size_adjustment\": \"Standard sizing; treat as portfolio hedge, not primary alpha source\"\n    },\n    {\n      \"rank\": 4,\n      \"asset_class\": \"CRYPTO\",\n      \"symbol\": \"BTC/USDT\",\n      \"direction\": \"LONG\",\n      \"rationale\": \"BTC is in a confirmed TRENDING regime (ADX 31.56, well above 25 threshold). RSI at 67.65 is elevated but not yet in overbought exhaustion territory. Price holding above $80K is technically constructive. BTC dominance at 58.36% confirms BTC is absorbing market flows \u2014 this is a BTC-led cycle phase. Scanner scored it 0 signals for MR, but the TRENDING regime makes it the preferred directional long in crypto.\",\n      \"catalysts\": \"JPMorgan Bitcoin reversal (institutional validation), Eric Trump $1M BTC prediction (retail sentiment fuel), BTC holding $80K support, institutional risk-on environment.\",\n      \"signal_strength\": \"MODERATE \u2014 trending regime confirmed, no MR signal needed for momentum approach\",\n      \"position_size_adjustment\": \"Standard sizing; this is a momentum/directional hold, not a mean-reversion entry\"\n    },\n    {\n      \"rank\": 5,\n      \"asset_class\": \"CRYPTO\",\n      \"symbol\": \"SOL/USDT\",\n      \"direction\": \"LONG\",\n      \"rationale\": \"Highest-quality crypto MR setup at C_GRADE (best available). RSI at 74.91 and BB% at 1.125 indicate stretched conditions \u2014 monitor for pullback entry rather than chasing. Hurst at 0.48 (anti-persistent) and ADX below 25 (ranging) suggest mean reversion is valid. Wait for RSI to pull back below 65 before initiating. Volume at $78.8M USDT is adequate for liquidity.\",\n      \"catalysts\": \"Ranging market creates MR opportunity on dips; SOL has relative strength vs other alts in current BTC-led regime.\",\n      \"signal_strength\": \"LOW-MODERATE (C_GRADE) \u2014 do not chase at current levels; set limit orders on pullback\",\n      \"position_size_adjustment\": \"Reduced sizing \u2014 50-60% of standard crypto allocation due to C_GRADE quality and overbought RSI\"\n    },\n    {\n      \"rank\": 6,\n      \"asset_class\": \"CRYPTO\",\n      \"symbol\": \"ETH/USDT\",\n      \"direction\": \"LONG\",\n      \"rationale\": \"ETH is the cleanest technical setup for mean reversion in crypto \u2014 RSI at 54.49 (neutral, not overbought), BB% at 0.655 (mid-band, not extended), MA20 deviation only 0.91% (tightly coiled). Despite a SKIP signal score (only 1), ETH represents a low-risk accumulation zone. High liquidity ($278M USDT 24h volume) makes execution clean. If BTC continues to lead, ETH historically follows with leverage.\",\n      \"catalysts\": \"ETH dominance at 10.03% \u2014 any rotation from BTC to alts would disproportionately benefit ETH. Tightly coiled price action near MA20 is a coiled spring setup.\",\n      \"signal_strength\": \"LOW \u2014 SKIP rating, but best risk/reward profile in crypto universe given neutral RSI and tight deviation\",\n      \"position_size_adjustment\": \"Reduced sizing \u2014 40-50% of standard; treat as speculative accumulation only\"\n    }\n  ],\n\n  \"watchlist_changes\": {\n    \"equity\": {\n      \"add\": [\n        {\n          \"symbol\": \"XLK\",\n          \"reason\": \"Top performing sector ETF (+8.43% WoW), direct exposure to dominant tech momentum; not currently on watchlist\"\n        },\n        {\n          \"symbol\": \"COPX\",\n          \"reason\": \"Copper hitting record highs per news \u2014 copper miners ETF captures commodity supercycle theme without single-stock risk\"\n        }\n      ],\n      \"remove\": [\n        {\n          \"symbol\": \"USO\",\n          \"reason\": \"Energy sector worst performer (-5.35% WoW), record SPR release depressing oil prices, structural headwind from Trump energy policy. Risk/reward unfavorable. Remove from active trading; retain only as macro monitor.\"\n        }\n      ],\n      \"avoid_earnings\": [],\n      \"avoid_other\": [\n        {\n          \"symbol\": \"XLE\",\n          \"reason\": \"Energy sector ETF down 5.35% \u2014 do not initiate new longs until energy stabilizes\"\n        },\n        {\n          \"symbol\": \"XLU\",\n          \"reason\": \"Utilities down 3.93% in risk-on environment \u2014 avoid defensive sectors while momentum is in tech\"\n        }\n      ]\n    },\n    \"crypto\": {\n      \"add\": [],\n      \"remove\": [\n        {\n          \"symbol\": \"DOT/USDT\",\n          \"reason\": \"Signal score 0, SKIP quality, low volume ($3.05M USDT), conflicting signals (ranging ADX but trending Hurst). Poor liquidity and no edge \u2014 remove from active scanning\"\n        }\n      ],\n      \"avoid\": [\n        {\n          \"symbol\": \"NEAR/USDT\",\n          \"reason\": \"Down 3.51% in 24h, SKIP quality, lowest momentum in the scan. Hurst 0.73 suggests trending DOWN, not suitable for LONG-only spot bot\"\n        }\n      ]\n    }\n  },\n\n  \"sector_focus\": {\n    \"best_mean_reversion_conditions\": [\n      {\n        \"sector\": \"Energy (XLE)\",\n        \"etf\": \"XLE\",\n        \"rationale\": \"Down 5.35% WoW \u2014 the most oversold sector. Record SPR release is likely a near-term event; energy demand fundamentals haven't collapsed. Watch for stabilization signal before entry. Iran geopolitical risk could rapidly reverse oil lower-or-higher. High risk, potential high reward on MR bounce. Wait for RSI confirmation before entering.\",\n        \"action\": \"WATCH \u2014 do not enter yet; set price alerts for stabilization\"\n      },\n      {\n        \"sector\": \"Utilities (XLU)\",\n        \"etf\": \"XLU\",\n        \"rationale\": \"Down 3.93% WoW as risk-on rotation out of defensives intensified. If AI power demand narrative re-emerges (data center electricity consumption), XLU could snap back sharply. Current weakness is technically overdone vs. fundamentals.\",\n        \"action\": \"LIGHT WATCH \u2014 small speculative MR position only if XLU approaches 52-week support levels\"\n      },\n      {\n        \"sector\": \"Healthcare (XLV)\",\n        \"etf\": \"XLV\",\n        \"rationale\": \"Down 1.15% WoW with FDA Commissioner firing adding headline risk. However, the selloff is moderate and healthcare tends to be resilient. Policy uncertainty may be overstated short-term.\",\n        \"action\": \"NEUTRAL WATCH \u2014 avoid new longs until FDA leadership clarity resolves\"\n      }\n    ],\n    \"avoid_or_underweight\": [\n      {\n        \"sector\": \"Technology (XLK)\",\n        \"reason\": \"Do NOT fade tech momentum \u2014 8.43% move means MR short would fight the primary trend. Tech is for MOMENTUM longs only this week, not mean reversion.\"\n      },\n      {\n        \"sector\": \"Financials (XLF)\",\n        \"reason\": \"Down 1.31% WoW with no clear catalyst for reversal. Avoid until banking/rate environment clarifies.\"\n      }\n    ]\n  },\n\n  \"crypto_outlook\": {\n    \"regime\": \"BTC-led\",\n    \"mean_reversion_active_crypto\": true,\n    \"sentiment_read\": \"Fear & Greed at 48 (Neutral) with only +1 day-over-day change indicates no speculative froth or panic \u2014 a stable, non-euphoric environment where mean reversion signals can be trusted. The neutral reading gives the bot room to operate MR strategies without fighting a euphoric or fearful crowd.\",\n    \"dominance_read\": \"BTC dominance at 58.36% is elevated and BTC is absorbing the lion's share of market flows. This is a classic BTC accumulation/consolidation phase where alts underperform. Altcoin MR setups should be sized conservatively; prioritize BTC-correlated trades and only take alt positions with clear technical setups.\",\n    \"top_crypto_opportunities\": [\n      {\n        \"rank\": 1,\n        \"symbol\": \"BTC/USDT\",\n        \"direction\": \"LONG\",\n        \"current_price\": 82073.8,\n        \"rationale\": \"Confirmed trending regime (ADX 31.56), RSI 67.65 not yet overbought, holding above $80K psychological support. Institutional tailwinds from JPMorgan reversal. Primary beneficiary of BTC-led regime. Momentum approach \u2014 hold or accumulate on any dip to $78K-$80K range.\",\n        \"entry_note\": \"Current levels acceptable for momentum position; ideal add on 3-5% pullback to $78K support\",\n        \"risk\": \"RSI approaching overbought; Iran escalation could trigger broad risk-off\"\n      },\n      {\n        \"rank\": 2,\n        \"symbol\": \"SOL/USDT\",\n        \"direction\": \"LONG\",\n        \"current_price\": 97.9,\n        \"rationale\": \"C_GRADE MR setup \u2014 best quality available in alt space. Anti-persistent Hurst (0.48) and ranging ADX confirm MR edge. Do NOT chase at $97.9 with RSI 74.91 and BB% 1.125 (extended). Set limit orders at $90-$92 range (approx. MA20 reversion target). Volume sufficient at $78.8M USDT.\",\n        \"entry_note\": \"LIMIT ORDER ONLY at $90-$92; do not market buy at current overbought levels\",\n        \"risk\": \"If BTC breaks down, SOL may fall faster than MR model predicts\"\n      },\n      {\n        \"rank\": 3,\n        \"symbol\": \"ETH/USDT\",\n        \"direction\": \"LONG\",\n        \"current_price\": 2343.47,\n        \"rationale\": \"Lowest technical risk in the crypto universe \u2014 RSI neutral at 54.49, BB% at 0.655 (mid-band), MA20 deviation only 0.91%. Coiled price action near MA20 with highest liquidity in the scan ($278M USDT volume). If BTC rally broadens to alts, ETH is the highest-quality first recipient. Accumulation zone.\",\n        \"entry_note\": \"Near-current-price accumulation acceptable given neutral technicals; small position sizing\",\n        \"risk\": \"SKIP signal rating \u2014 no confirmed setup; purely speculative accumulation play\"\n      }\n    ],\n    \"crypto_risk_warnings\": [\n      {\n        \"event\": \"Iran Military Action Risk\",\n        \"severity\": \"HIGH\",\n        \"detail\": \"Trump meeting national security team Monday to discuss resuming military strikes on Iran after negotiations deadlocked. Escalation would trigger broad risk-off, likely causing BTC to drop 5-15% rapidly. All crypto positions should have hard stops in place before Monday's NSC meeting outcome.\"\n      },\n      {\n        \"event\": \"BTC RSI Overbought Proximity\",\n        \"severity\": \"MEDIUM\",\n        \"detail\": \"BTC RSI at 67.65, approaching overbought territory (70+). SOL RSI already at 74.91, LINK at 72.34. Multiple assets simultaneously near overbought \u2014 risk of synchronized pullback if BTC fails to hold $80K on any test.\"\n      },\n      {\n        \"event\": \"Record SPR Release / Oil Price Shock\",\n        \"severity\": \"MEDIUM\",\n        \"detail\": \"Largest-ever weekly SPR release (1.22M bpd) signals administration concern about oil prices. Energy sector collapse (-5.35%) could spread to broader risk sentiment if it signals economic slowdown fears.\"\n      },\n      {\n        \"event\": \"BTC Dominance Peak Risk\",\n        \"severity\": \"LOW-MEDIUM\",\n        \"detail\": \"BTC dominance at 58.36% is elevated. If dominance peaks and rotates to alts, BTC could consolidate while alts spike. The bot should not be caught fully long BTC with no alt exposure if rotation begins.\"\n      },\n      {\n        \"event\": \"FDA Commissioner Firing\",\n        \"severity\": \"LOW\",\n        \"detail\": \"Policy uncertainty at FDA could create volatility in biotech/healthcare names but unlikely to directly impact crypto markets.\"\n      }\n    ]\n  },\n\n  \"risk_warnings\": {\n    \"macro_events_this_week\": [\n      {\n        \"event\": \"US-Iran Military Action Decision\",\n        \"timing\": \"Monday NSC Meeting\",\n        \"severity\": \"CRITICAL\",\n        \"detail\": \"If Trump approves military action against Iran, expect: oil spike (+10-20%), equity selloff (S&P -2 to -5%), gold surge, BTC drop. Position all books with this tail risk in mind. Consider holding GLD as explicit hedge.\"\n      },\n      {\n        \"event\": \"Record SPR Release Implications\",\n        \"timing\": \"This week \u2014 ongoing\",\n        \"severity\": \"HIGH\",\n        \"detail\": \"The largest-ever SPR weekly release signals administration is actively suppressing oil prices. Energy sector already down 5.35%. USO and XLE longs are dangerous. Watch for secondary inflation/deflation signal.\"\n      },\n      {\n        \"event\": \"S&P 500 at 7,400 \u2014 Potential Resistance\",\n        \"timing\": \"This week\",\n        \"severity\": \"MEDIUM\",\n        \"detail\": \"S&P 500 touching new highs at 7,400 may attract profit-taking. Tech sector up 8.43% in one week is an aggressive move that could see consolidation. Momentum is strong but don't ignore extended valuation risk.\"\n      },\n      {\n        \"event\": \"Copper at Record Highs\",\n        \"timing\": \"This week\",\n        \"severity\": \"MEDIUM\",\n        \"detail\": \"Commodity supercycle signal. Positive for materials, infrastructure, and risk assets broadly. But commodity spikes historically precede central bank tightening responses \u2014 monitor Fed speak this week.\"\n      }\n    ],\n    \"specific_risk_flags\": [\n      \"Iran escalation is the #1 tail risk \u2014 hard stops mandatory on all positions before Monday NSC meeting\",\n      \"Do not size up into tech momentum without trailing stop protection \u2014 8.43% weekly move is unsustainable near-term\",\n      \"Crypto altcoins showing RSI divergence (SOL 74.91, LINK 72.34) \u2014 avoid chasing; wait for pullback entries\",\n      \"No earnings this week \u2014 clean of earnings risk, but geopolitical headline risk is elevated\",\n      \"Energy sector (XLE, USO) \u2014 avoid all new longs given policy headwinds and SPR release pressure\",\n      \"BTC holding $80K is the critical support \u2014 a break below $78K would invalidate bullish crypto thesis\"\n    ],\n    \"max_position_size_guidance\": {\n      \"vix_level\": 18.16,\n      \"equity_max_single_name\": \"7% of equity book\",\n      \"equity_max_sector_etf\": \"10% of equity book\",\n      \"crypto_max_single_pair\": \"8% of crypto book\",\n      \"overall_note\": \"VIX at 18 = standard sizing. Iran risk warrants keeping 10-15% of total book in cash/GLD as tail hedge. Do not deploy full capital in trending momentum names without stop-loss discipline.\"\n    }\n  },\n\n  \"confidence_score\": 6,\n\n  \"confidence_reason\": \"Equity conditions are bullish (VIX 18, S&P at highs, tech momentum strong) but crypto setups are weak (no A/B grade signals, all SKIP or C_GRADE, BTC-led regime limiting alt opportunities), and Iran military action risk on Monday creates a meaningful binary tail event that warrants holding cash reserves and keeping position sizes disciplined rather than pressing full allocation.\",\n\n  \"generated_at\": \"2026-05-11T18:00:00Z\",\n  \"valid_until\": \"2026-05-15T21:00:00Z\"\n}\n```"
 }

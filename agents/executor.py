@@ -47,7 +47,7 @@ _FALLBACK_PROFILES = {
     "medium_safety": {
         "max_open_positions":    5,
         "max_daily_loss_pct":    0.04,
-        "max_position_pct":      0.15,
+        "max_position_pct":      0.10,
         "risk_pct_per_trade":    0.015,
         "min_signal_score":      2,
         "max_stop_distance_pct": 0.08,

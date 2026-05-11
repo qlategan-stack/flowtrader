@@ -23,6 +23,8 @@ DASHBOARD_ROOT = BOT_ROOT.parent.parent / "flowtrader-dashboard" # sibling repo
 BOT_JOURNAL    = BOT_ROOT / "journal" / "trades.jsonl"
 DASH_JOURNAL   = DASHBOARD_ROOT / "journal" / "trades.jsonl"
 
+SUGGESTION_FILES = ["suggestions_in.jsonl", "suggestions_out.jsonl"]
+
 
 GH_USER = "qlategan-stack"
 
@@ -57,6 +59,24 @@ def _load_jsonl(path: Path) -> list[dict]:
     return entries
 
 
+def _sync_suggestions() -> list[str]:
+    """Copy suggestions_*.jsonl files wholesale from bot to dashboard.
+    Returns list of file names that were updated (content changed)."""
+    updated = []
+    for fname in SUGGESTION_FILES:
+        src = BOT_ROOT / "journal" / fname
+        dst = DASHBOARD_ROOT / "journal" / fname
+        if not src.exists():
+            continue
+        src_bytes = src.read_bytes()
+        if dst.exists() and dst.read_bytes() == src_bytes:
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src_bytes)
+        updated.append(fname)
+    return updated
+
+
 def main() -> int:
     if not BOT_JOURNAL.exists():
         print("[journal-push] no bot journal found, skipping")
@@ -68,24 +88,37 @@ def main() -> int:
     existing_ts  = {e.get("timestamp") for e in dash_entries if e.get("timestamp")}
     new_entries  = [e for e in bot_entries if e.get("timestamp") not in existing_ts]
 
-    if not new_entries:
+    sugg_updated = _sync_suggestions()
+
+    if not new_entries and not sugg_updated:
         print(f"[journal-push] no new entries ({len(bot_entries)} in bot journal, all synced)")
         return 0
 
-    DASH_JOURNAL.parent.mkdir(parents=True, exist_ok=True)
-    with DASH_JOURNAL.open("a", encoding="utf-8") as f:
-        for entry in new_entries:
-            f.write(json.dumps(entry) + "\n")
+    if new_entries:
+        DASH_JOURNAL.parent.mkdir(parents=True, exist_ok=True)
+        with DASH_JOURNAL.open("a", encoding="utf-8") as f:
+            for entry in new_entries:
+                f.write(json.dumps(entry) + "\n")
+        print(f"[journal-push] appended {len(new_entries)} new entr{'y' if len(new_entries) == 1 else 'ies'} to dashboard journal")
 
-    print(f"[journal-push] appended {len(new_entries)} new entr{'y' if len(new_entries) == 1 else 'ies'} to dashboard journal")
+    if sugg_updated:
+        print(f"[journal-push] updated suggestion files: {', '.join(sugg_updated)}")
 
     _git("add", "journal/trades.jsonl")
+    for fname in sugg_updated:
+        _git("add", f"journal/{fname}")
+
     if _git("diff", "--cached", "--quiet").returncode == 0:
         print("[journal-push] git diff empty after add — nothing to commit")
         return 0
 
     now_utc = datetime.now(timezone.utc).isoformat()
-    msg = f"chore: journal sync {now_utc} (+{len(new_entries)} entries)"
+    parts = []
+    if new_entries:
+        parts.append(f"+{len(new_entries)} entries")
+    if sugg_updated:
+        parts.append(f"suggestions: {', '.join(sugg_updated)}")
+    msg = f"chore: journal sync {now_utc} ({'; '.join(parts)})"
     cm = _git("commit", "-m", msg)
     if cm.returncode != 0:
         print(f"[journal-push] commit failed: {cm.stderr.strip()}")
