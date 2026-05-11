@@ -11,7 +11,7 @@ import pytest
 _SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(_SCRIPTS))
 
-from ci_sync_journal import sync_trades, sync_bybit_balance  # noqa: E402
+from ci_sync_journal import sync_trades  # noqa: E402
 
 
 @pytest.fixture
@@ -108,32 +108,5 @@ def test_sync_trades_skips_corrupt_lines(bot_dash):
     assert sync_trades(bot, dash) == 2
 
 
-# ── sync_bybit_balance ────────────────────────────────────────────────────────
-
-def test_sync_bybit_replaces_when_changed(bot_dash):
-    bot_root, dash_root = bot_dash
-    bot = bot_root / "journal" / "bybit_balance.json"
-    dash = dash_root / "journal" / "bybit_balance.json"
-    bot.write_text('{"account_value": 1000}', encoding="utf-8")
-    dash.write_text('{"account_value": 999}', encoding="utf-8")
-
-    assert sync_bybit_balance(bot, dash) is True
-    assert dash.read_text(encoding="utf-8") == '{"account_value": 1000}'
-
-
-def test_sync_bybit_skips_when_unchanged(bot_dash):
-    bot_root, dash_root = bot_dash
-    bot = bot_root / "journal" / "bybit_balance.json"
-    dash = dash_root / "journal" / "bybit_balance.json"
-    bot.write_text('{"account_value": 1000}', encoding="utf-8")
-    dash.write_text('{"account_value": 1000}', encoding="utf-8")
-
-    assert sync_bybit_balance(bot, dash) is False
-
-
-def test_sync_bybit_no_bot_file_returns_false(bot_dash):
-    bot_root, dash_root = bot_dash
-    bot = bot_root / "journal" / "bybit_balance.json"  # missing
-    dash = dash_root / "journal" / "bybit_balance.json"
-
-    assert sync_bybit_balance(bot, dash) is False
+# sync_bybit_balance was removed 2026-05-11 — local push_bybit_balance.py is
+# the sole writer to journal/bybit_balance.json. See trading-bot.yml step 8.

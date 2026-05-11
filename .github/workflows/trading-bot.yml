@@ -134,31 +134,14 @@ jobs:
           echo "Running FlowTrader in mode: $MODE"
           python main.py $MODE
 
-      # ── 8. Fetch Bybit balance snapshot ─────────────────────────────────
-      # GitHub Actions has unrestricted internet — no geo-blocking.
-      # Writes journal/bybit_balance.json so the dashboard can read it
-      # without ever calling the Bybit API directly from Streamlit Cloud.
-      - name: Fetch Bybit balance snapshot
-        env:
-          BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
-          BYBIT_SECRET_KEY: ${{ secrets.BYBIT_SECRET_KEY }}
-          BYBIT_TESTNET: ${{ secrets.BYBIT_TESTNET || 'true' }}
-        run: |
-          python - <<'EOF'
-          import sys, json
-          from pathlib import Path
-          from datetime import datetime, timezone
-          sys.path.insert(0, '.')
-          try:
-              from data.crypto_fetcher import BybitFetcher
-              b = BybitFetcher()
-              bal = b.get_balance()
-          except Exception as e:
-              bal = {"error": str(e)}
-          bal["fetched_at"] = datetime.now(timezone.utc).isoformat()
-          Path("journal/bybit_balance.json").write_text(json.dumps(bal, indent=2))
-          print("Bybit balance snapshot:", bal)
-          EOF
+      # ── 8. Bybit balance snapshot — DISABLED ─────────────────────────────
+      # Removed 2026-05-11. The local Windows Task Scheduler job at
+      # flowtrader-dashboard/scripts/push_bybit_balance.py is now the sole
+      # writer to journal/bybit_balance.json. Running both writers caused
+      # chronic merge conflicts on the dashboard repo (CI overwrote the
+      # local file, local overwrote CI's, neither could fast-forward).
+      # If you ever need to re-enable this step, also disable the local
+      # Task Scheduler entry first to keep a single source of truth.
 
       # ── 9. Save journal and logs as artifacts ────────────────────────────
       - name: Upload journal artifacts
@@ -172,7 +155,6 @@ jobs:
             journal/weekly_summary.md
             journal/weekly_research_memo.md
             journal/weekly_research_memo.json
-            journal/bybit_balance.json
           retention-days: 90  # Keep 90 days of history
 
       # ── 10. Save updated journal to cache ────────────────────────────────
@@ -212,7 +194,7 @@ jobs:
           cd "$RUNNER_TEMP/dashboard"
           git config user.name  "FlowTrader CI"
           git config user.email "ci@flowtrader.local"
-          git add journal/trades.jsonl journal/bybit_balance.json 2>/dev/null || true
+          git add journal/trades.jsonl 2>/dev/null || true
 
           if git diff --cached --quiet; then
             echo "No journal changes to push"

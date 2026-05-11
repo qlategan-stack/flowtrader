@@ -9,9 +9,12 @@ after the dashboard repo has been cloned with a write-capable token.
 
 Behaviour:
   * Dedups trades.jsonl entries by `timestamp` so re-runs never duplicate.
-  * Replaces bybit_balance.json wholesale (it's a snapshot, not a log).
   * Exits 0 with nothing to do if no new content to write.
   * Exits 1 on hard error.
+
+bybit_balance.json is intentionally NOT synced here. The local
+flowtrader-dashboard/scripts/push_bybit_balance.py is the sole writer
+(see trading-bot.yml step 8 comment for the history).
 
 The workflow uses the script's stdout to decide whether to commit, by checking
 whether any of the target files are dirty in `git status` after this script
@@ -22,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 from pathlib import Path
 
@@ -67,22 +69,6 @@ def sync_trades(bot_journal: Path, dash_journal: Path) -> int:
     return len(new_entries)
 
 
-def sync_bybit_balance(bot_path: Path, dash_path: Path) -> bool:
-    """Copy the latest bybit_balance.json snapshot. Returns True if file changed."""
-    if not bot_path.exists():
-        print(f"[ci-sync] no bot bybit_balance.json at {bot_path} — skipping")
-        return False
-
-    if dash_path.exists() and dash_path.read_bytes() == bot_path.read_bytes():
-        print("[ci-sync] bybit_balance.json: unchanged")
-        return False
-
-    dash_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(bot_path, dash_path)
-    print("[ci-sync] bybit_balance.json: replaced")
-    return True
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -102,11 +88,6 @@ def main() -> int:
     sync_trades(
         bot_journal  = bot_root  / "journal" / "trades.jsonl",
         dash_journal = dash_root / "journal" / "trades.jsonl",
-    )
-
-    sync_bybit_balance(
-        bot_path  = bot_root  / "journal" / "bybit_balance.json",
-        dash_path = dash_root / "journal" / "bybit_balance.json",
     )
 
     return 0
