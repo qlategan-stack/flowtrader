@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 
-load_dotenv()
+_BOT_ROOT    = Path(__file__).resolve().parent.parent
+load_dotenv(_BOT_ROOT / ".env")
 logger = logging.getLogger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-_BOT_ROOT    = Path(__file__).resolve().parent.parent
 _CONFIG_FILE = _BOT_ROOT / "config.yaml"
 
 # risk_profile.json search order:
@@ -98,6 +98,15 @@ def load_risk_profile() -> tuple[str, dict]:
 def _is_crypto(symbol: str) -> bool:
     """Crypto symbols contain a slash — e.g. BTC/USDT."""
     return "/" in str(symbol)
+
+
+def _get_crypto_client():
+    """Return BinanceFetcher if BINANCE_API_KEY is set, else BybitFetcher."""
+    if os.getenv("BINANCE_API_KEY"):
+        from data.crypto_fetcher import BinanceFetcher
+        return BinanceFetcher()
+    from data.crypto_fetcher import BybitFetcher
+    return BybitFetcher()
 
 
 # ── Hard absolute cap ─────────────────────────────────────────────────────────
@@ -304,17 +313,18 @@ class OrderExecutor:
 
         # ── Account context ───────────────────────────────────────────────────
         if is_crypto:
-            from data.crypto_fetcher import BybitFetcher
-            bybit = BybitFetcher()
-            bybit_bal = bybit.get_balance()
-            if "error" in bybit_bal:
-                return {"status": "ERROR", "reason": f"Bybit balance fetch failed: {bybit_bal['error']}", "symbol": symbol}
-            account_value     = float(bybit_bal.get("account_value", 0))
-            buying_power      = float(bybit_bal.get("free_usdt",     0))
-            current_positions = int(bybit_bal.get("open_positions",  0))
+            # Prefer Binance when API key is configured; fall back to Bybit.
+            crypto_client = _get_crypto_client()
+            crypto_bal = crypto_client.get_balance()
+            if "error" in crypto_bal:
+                exchange_name = type(crypto_client).__name__
+                return {"status": "ERROR", "reason": f"{exchange_name} balance fetch failed: {crypto_bal['error']}", "symbol": symbol}
+            account_value     = float(crypto_bal.get("account_value", 0))
+            buying_power      = float(crypto_bal.get("free_usdt",     0))
+            current_positions = int(crypto_bal.get("open_positions",  0))
             day_pl            = 0.0
         else:
-            bybit = None
+            crypto_client = None
             account_value     = float(account.get("portfolio_value", 10000))
             buying_power      = float(account.get("buying_power",    0))
             current_positions = int(account.get("open_positions",    0))
@@ -390,9 +400,9 @@ class OrderExecutor:
                 "attempted_quantity": quantity,
             }
 
-        # ── Place crypto order via Bybit ──────────────────────────────────────
+        # ── Place crypto order (Binance if configured, else Bybit) ───────────
         if is_crypto:
-            result = bybit.place_order(
+            result = crypto_client.place_order(
                 symbol=symbol,
                 side=action,
                 usdt_amount=usdt_budget,
@@ -400,7 +410,8 @@ class OrderExecutor:
                 stop_loss_price=stop_loss,
                 take_profit_price=take_profit,
             )
-            logger.info(f"Bybit order: {action} {symbol} — {result.get('status')}")
+            exchange_label = crypto_bal.get("exchange", "crypto")
+            logger.info(f"{exchange_label.capitalize()} order: {action} {symbol} — {result.get('status')}")
             return result
 
         # ── Route equities to Alpaca ──────────────────────────────────────────

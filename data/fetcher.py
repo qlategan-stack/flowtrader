@@ -8,6 +8,7 @@ import os
 import json
 import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 import pandas as pd
 import numpy as np
@@ -15,7 +16,7 @@ import requests
 import pytz
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).parent.parent / ".env")
 logger = logging.getLogger(__name__)
 
 # ── Alpaca client setup ────────────────────────────────────────────────────────
@@ -382,6 +383,15 @@ class MarketDataFetcher:
             if "error" not in indicators and bars is not None:
                 indicators = engine.enrich_symbol(symbol, bars, indicators)
 
+            # Directional gate + momentum scoring + regime router
+            from strategies.momentum import (
+                apply_directional_gate, compute_momentum, select_strategy_mode,
+            )
+            apply_directional_gate(indicators)
+            if "error" not in indicators and bars is not None:
+                compute_momentum(bars, indicators)
+            select_strategy_mode(indicators, min_score)
+
             snapshot["watchlist"].append({
                 "symbol": symbol,
                 "venue": "alpaca",
@@ -403,15 +413,22 @@ class MarketDataFetcher:
             except Exception as e:
                 logger.error(f"Crypto snapshot failed (continuing with equities): {e}")
 
+        from strategies.momentum import active_score as _active_score
         snapshot["watchlist"].sort(
-            key=lambda x: x["indicators"].get("signal_score", 0),
+            key=lambda x: (
+                _active_score(x["indicators"]) if x["indicators"].get("strategy_mode", "NONE") != "NONE"
+                else x["indicators"].get("signal_score", 0)
+            ),
             reverse=True
         )
         return snapshot
 
     def _fetch_crypto_account_snapshot(self) -> dict:
-        """Pull Bybit balance for the decision agent's account context."""
+        """Pull crypto exchange balance. Prefers Binance if API key is set, else Bybit."""
         try:
+            if os.getenv("BINANCE_API_KEY"):
+                from data.crypto_fetcher import BinanceFetcher
+                return BinanceFetcher().get_balance()
             from data.crypto_fetcher import BybitFetcher
             return BybitFetcher().get_balance()
         except Exception as e:
@@ -419,20 +436,25 @@ class MarketDataFetcher:
             return {"error": str(e)}
 
     def _rate_setup(self, indicators: dict, min_score: int = 3) -> str:
-        """Rate the quality of a mean reversion setup relative to the active profile's min_signal_score."""
+        """
+        Rate the quality of the currently active strategy's setup. Grade is
+        relative to min_signal_score from the active risk profile, and is
+        applied to whichever score (mean reversion or momentum) drives the
+        chosen strategy_mode. Returns SKIP if no strategy is eligible.
+        """
         if "error" in indicators:
             return "NO_DATA"
 
-        score = indicators.get("signal_score", 0)
-        eligible = indicators.get("mean_reversion_eligible", False)
+        from strategies.momentum import active_score
+        mode = indicators.get("strategy_mode", "NONE")
+        if mode == "NONE":
+            return "SKIP"
 
-        if not eligible:
-            return "SKIP"
-        elif score >= min_score + 2:
+        score = active_score(indicators)
+        if score >= min_score + 2:
             return "A_GRADE"
-        elif score >= min_score + 1:
+        if score >= min_score + 1:
             return "B_GRADE"
-        elif score >= min_score:
+        if score >= min_score:
             return "C_GRADE"
-        else:
-            return "SKIP"
+        return "SKIP"

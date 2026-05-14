@@ -15,7 +15,7 @@ import pytz
 import yaml
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 Path("journal").mkdir(exist_ok=True)
 
@@ -46,13 +46,19 @@ def load_config() -> dict:
 def check_exits(market_snapshot: dict, account: dict) -> list[dict]:
     """
     Inspect each open position against current indicators and return SELL
-    decisions for positions whose mean-reversion thesis has played out or
-    been invalidated.
+    decisions for positions whose strategy thesis has played out or been
+    invalidated.
 
-    Exit triggers (any one fires):
+    Mean-reversion exit triggers (any one fires):
       • RSI ≥ 60 — mean-reverted from oversold to neutral/overbought
       • Price ≥ MA20 — price has reverted to the mean (target reached)
-      • Regime turned TRENDING (ADX > 30) — strategy assumption violated
+      • Regime turned TRENDING (ADX > 30) — MR assumption violated
+
+    These MR-specific triggers are suppressed for positions whose current
+    indicators show MOMENTUM mode: RSI > 60 is expected behaviour for a
+    momentum trade and TRENDING is exactly the regime we want to ride. The
+    Alpaca/Bybit bracket order (momentum_stop / momentum_target placed at
+    entry) handles momentum exits automatically.
     """
     positions = account.get("positions", []) or []
     if not positions:
@@ -69,6 +75,10 @@ def check_exits(market_snapshot: dict, account: dict) -> list[dict]:
             continue  # No fresh data for this symbol — skip exit check
         ind = item.get("indicators", {})
         if "error" in ind:
+            continue
+
+        # Don't apply MR exits to momentum positions; the bracket handles them.
+        if ind.get("strategy_mode") == "MOMENTUM":
             continue
 
         rsi    = float(ind.get("rsi", 50))
@@ -200,11 +210,13 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
 
     # Log top setups
     for item in market_snapshot.get("watchlist", [])[:3]:
+        ind = item["indicators"]
         logger.info(
-            f"  {item['symbol']}: Score={item['indicators'].get('signal_score', 0)} "
+            f"  {item['symbol']}: Mode={ind.get('strategy_mode', 'NONE')} "
+            f"MR={ind.get('signal_score', 0)} Mom={ind.get('momentum_score', 0)} "
             f"Quality={item.get('setup_quality')} "
-            f"RSI={item['indicators'].get('rsi', 'N/A')} "
-            f"Regime={item['indicators'].get('regime', 'N/A')}"
+            f"RSI={ind.get('rsi', 'N/A')} "
+            f"Regime={ind.get('regime', 'N/A')}"
         )
 
     # Step 3a: Check existing positions for exit signals BEFORE new entries.

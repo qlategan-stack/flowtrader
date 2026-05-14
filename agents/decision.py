@@ -7,11 +7,12 @@ and returns a structured trade decision with full reasoning.
 import os
 import json
 import logging
+from pathlib import Path
 from typing import Optional
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 logger = logging.getLogger(__name__)
 
 
@@ -182,10 +183,13 @@ Be honest and specific. Identify real patterns, not generic advice.
     def _build_analysis_prompt(self, snapshot: dict, account: dict) -> str:
         """Build the full market analysis prompt."""
 
-        # Include symbols that meet the active profile's min_signal_score threshold
+        # A setup is a candidate if the regime router picked a strategy for it.
+        # Either MEAN_REVERSION (oversold mean-reversion) or MOMENTUM (breakout
+        # continuation) qualifies — the router has already enforced the min
+        # signal-score and directional gates upstream.
         top_setups = [
             s for s in snapshot.get("watchlist", [])
-            if s.get("indicators", {}).get("signal_score", 0) >= self._min_score
+            if s.get("indicators", {}).get("strategy_mode", "NONE") != "NONE"
             and s.get("setup_quality") != "NO_DATA"
         ][:3]
 
@@ -194,6 +198,19 @@ Be honest and specific. Identify real patterns, not generic advice.
         research_ctx = self._build_research_context()
 
         max_pos = self._profile.get("max_open_positions", 3)
+
+        watchlist_summary = [
+            {
+                "symbol": s["symbol"],
+                "strategy_mode": s["indicators"].get("strategy_mode", "NONE"),
+                "mr_score": s["indicators"].get("signal_score", 0),
+                "mom_score": s["indicators"].get("momentum_score", 0),
+                "quality": s["setup_quality"],
+                "regime": s["indicators"].get("regime", "?"),
+            }
+            for s in all_symbols
+        ]
+
         return f"""
 TRADING SESSION — {snapshot.get('timestamp', 'Unknown time')}
 
@@ -205,23 +222,49 @@ ACCOUNT:
 - Open Positions: {account.get('open_positions', 0)}/{max_pos}
 - Today's P&L: ${account.get('day_pl', 0):+,.2f}
 
-{research_ctx + chr(10) if research_ctx else ""}TOP SETUPS RANKED BY SIGNAL SCORE:
+{research_ctx + chr(10) if research_ctx else ""}STRATEGY MODES — TWO ENTRY PATHS ARE NOW ACTIVE:
+
+  MEAN_REVERSION (the CLAUDE.md default rules apply):
+    - Buy oversold extension expecting return to MA20
+    - Requires at least one classical oversold trigger (RSI<45, BelowLowerBB,
+      or BelowMA20>1%) — regime/math signals alone are NOT enough
+    - Skip if regime == TRENDING (ADX > 25)
+    - Stop = indicators.stop_loss_price (0.5x ATR below entry)
+    - Target = indicators.take_profit_price (MA20, the mean)
+
+  MOMENTUM (new path — overrides the CLAUDE.md "ADX>25 → skip" rule):
+    - Buy *with* a confirmed uptrend, expecting continuation
+    - Requires at least one directional uptrend trigger (RSI>55, AboveUpperBB,
+      AboveMA20>1%, or 20-day high breakout)
+    - ADX > 25 is a POSITIVE signal here (trend strength), not a veto
+    - Stop = indicators.momentum_stop_loss_price (1x ATR or 5-day low, tighter)
+    - Target = indicators.momentum_take_profit_price (2x ATR, 1:2 R:R)
+    - Time stop: exit any momentum trade open longer than 5 trading days
+
+The regime router has already chosen a strategy_mode per symbol; use that mode's
+score and bracket levels. If strategy_mode == "MOMENTUM", set the JSON
+`stop_loss` and `take_profit` fields to momentum_stop_loss_price and
+momentum_take_profit_price — NOT the mean-reversion slots.
+
+TOP SETUPS (regime router picked a strategy for each):
 {json.dumps(top_setups, indent=2)}
 
 FULL WATCHLIST SUMMARY:
-{json.dumps([{'symbol': s['symbol'], 'score': s['indicators'].get('signal_score',0), 'quality': s['setup_quality'], 'regime': s['indicators'].get('regime','?')} for s in all_symbols], indent=2)}
+{json.dumps(watchlist_summary, indent=2)}
 
 TASK:
 1. Review the top setups against your signal rules and guardrails
-2. Weigh them against the weekly research brief above
-3. Select the BEST single trade to place this session (or SKIP if nothing qualifies)
-4. If multiple qualify, pick highest signal score with lowest risk
+2. For each, honour its strategy_mode and use the matching bracket levels
+3. Weigh them against the weekly research brief above
+4. Select the BEST single trade to place this session (or SKIP if nothing qualifies)
+5. If multiple qualify, prefer the higher active score with lowest stop distance
 
 CRITICAL OUTPUT RULE: Your response MUST begin with the JSON decision block inside
 a ```json code fence. Do NOT write any analysis or prose before the JSON block.
 Reasoning and journal_entry go inside the JSON fields, not outside it.
 
-Active risk profile requires signal_score >= {self._min_score} to enter. SKIP freely below that threshold.
+Active risk profile requires the active score (mean reversion OR momentum,
+matching strategy_mode) >= {self._min_score} to enter. SKIP freely below that threshold.
 """
 
     def _parse_decision(self, raw_text: str) -> dict:

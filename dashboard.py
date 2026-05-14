@@ -23,7 +23,9 @@ import yaml
 from dotenv import load_dotenv
 
 # ── Secrets: .env locally, st.secrets on Streamlit Cloud ─────────────────────
-load_dotenv()
+# Use __file__-relative path so .env is found regardless of the CWD from which
+# Streamlit is launched (e.g. `streamlit run trading-bot/dashboard.py` from root).
+load_dotenv(Path(__file__).parent / ".env")
 try:
     for _k, _v in st.secrets.items():
         os.environ.setdefault(_k, str(_v))
@@ -83,6 +85,18 @@ def _journal():
 @st.cache_data(ttl=REFRESH_SEC)
 def fetch_account():
     return _fetcher().get_account_snapshot()
+
+@st.cache_data(ttl=REFRESH_SEC)
+def fetch_crypto_account():
+    """Fetch crypto exchange balance — Binance if API key is set, else Bybit."""
+    try:
+        if os.getenv("BINANCE_API_KEY"):
+            from data.crypto_fetcher import BinanceFetcher
+            return BinanceFetcher().get_balance()
+        from data.crypto_fetcher import BybitFetcher
+        return BybitFetcher().get_balance()
+    except Exception as e:
+        return {"error": str(e)}
 
 @st.cache_data(ttl=REFRESH_SEC)
 def fetch_snapshot(watchlist: tuple):
@@ -609,16 +623,22 @@ with tab_market:
     if CRYPTO_LIST:
         st.divider()
         st.subheader("Crypto Watchlist (configured)")
-        st.caption("Crypto pairs run 24/7. Live Alpaca crypto data requires a funded account.")
+        _crypto_exchange = "Binance" if os.getenv("BINANCE_API_KEY") else "Bybit"
+        st.caption(f"Crypto pairs run 24/7 via {_crypto_exchange}.")
         cc = st.columns(len(CRYPTO_LIST))
         for i, sym in enumerate(CRYPTO_LIST):
-            cc[i].info(f"**{sym}**\nMonitored via Alpaca Crypto API")
+            cc[i].info(f"**{sym}**\nMonitored via {_crypto_exchange}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — ACCOUNT
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_account:
+
+    from agents.executor import load_risk_profile
+    _, _active_profile = load_risk_profile()
+    _max_positions = _active_profile.get("max_open_positions", 3)
+    _max_loss_pct  = _active_profile.get("max_daily_loss_pct", 0.02)
 
     with st.spinner("Fetching account data…"):
         acct = fetch_account()
@@ -653,13 +673,13 @@ with tab_account:
 
     with risk_col1:
         st.subheader("Position Capacity")
-        cap_frac = open_pos / 3
+        cap_frac = open_pos / _max_positions
         cap_icon = "🔴" if cap_frac >= 1.0 else "🟡" if cap_frac >= 0.67 else "🟢"
-        st.progress(cap_frac, text=f"{cap_icon} {open_pos} / 3 positions used")
+        st.progress(cap_frac, text=f"{cap_icon} {open_pos} / {_max_positions} positions used")
 
     with risk_col2:
         st.subheader("Daily Loss Limit")
-        max_loss  = portfolio * 0.02
+        max_loss  = portfolio * _max_loss_pct
         loss_used = abs(day_pl) if day_pl < 0 else 0
         loss_frac = min(loss_used / max_loss, 1.0) if max_loss else 0
         loss_icon = "🔴" if loss_frac >= 0.8 else "🟡" if loss_frac >= 0.5 else "🟢"
@@ -668,9 +688,53 @@ with tab_account:
 
     st.divider()
 
+    # ── Crypto account (Binance / Bybit) ──────────────────────────────────────
+    if CRYPTO_LIST:
+        with st.spinner("Fetching crypto account…"):
+            crypto_bal = fetch_crypto_account()
+        _cx_name   = crypto_bal.get("exchange", "crypto").capitalize()
+        _cx_mode   = "TESTNET" if crypto_bal.get("testnet", True) else "LIVE"
+        st.subheader(f"Crypto Account — {_cx_name} ({_cx_mode})")
+
+        if "error" in crypto_bal:
+            st.warning(f"Could not load {_cx_name} account: {crypto_bal['error']}")
+        else:
+            _acct_val   = float(crypto_bal.get("account_value", 0))
+            _total_usdt = float(crypto_bal.get("total_usdt", 0))
+            _free_usdt  = float(crypto_bal.get("free_usdt", 0))
+            _pos_val    = float(crypto_bal.get("position_value", 0))
+            _cx_pos_cnt = int(crypto_bal.get("open_positions", 0))
+
+            ca1, ca2, ca3, ca4 = st.columns(4)
+            ca1.metric("Account Value",   f"${_acct_val:,.2f}")
+            ca2.metric("Total USDT",      f"${_total_usdt:,.2f}")
+            ca3.metric("Free USDT",       f"${_free_usdt:,.2f}")
+            ca4.metric("Coin Positions",  _cx_pos_cnt)
+
+            _cx_positions = crypto_bal.get("positions", [])
+            if _cx_positions:
+                _cx_rows = []
+                for _cp in _cx_positions:
+                    _cx_rows.append({
+                        "Coin":         _cp.get("currency", "—"),
+                        "Amount":       _cp.get("amount", 0),
+                        "Price (USD)":  _cp.get("price_usd"),
+                        "Value (USD)":  _cp.get("value_usd"),
+                    })
+                st.dataframe(
+                    pd.DataFrame(_cx_rows).style.format({
+                        "Amount":      "{:,.6f}",
+                        "Price (USD)": "${:,.4f}",
+                        "Value (USD)": "${:,.2f}",
+                    }, na_rep="—"),
+                    use_container_width=True, hide_index=True,
+                )
+            else:
+                st.info(f"No open coin positions on {_cx_name}.")
+
     # ── Open positions table ──────────────────────────────────────────────────
     positions = acct.get("positions", [])
-    st.subheader(f"Open Positions ({len(positions)} / 3)")
+    st.subheader(f"Open Positions ({len(positions)} / {_max_positions})")
 
     if not positions:
         st.info("No open positions.")
