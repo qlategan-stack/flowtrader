@@ -195,6 +195,10 @@ jobs:
           git config user.name  "FlowTrader CI"
           git config user.email "ci@flowtrader.local"
           git add journal/trades.jsonl 2>/dev/null || true
+          git add journal/suggestions_in.jsonl 2>/dev/null || true
+          git add journal/suggestions_out.jsonl 2>/dev/null || true
+          git add journal/weekly_research_memo.json 2>/dev/null || true
+          git add journal/weekly_research_memo.md 2>/dev/null || true
 
           if git diff --cached --quiet; then
             echo "No journal changes to push"
@@ -264,6 +268,40 @@ jobs:
             journal/suggestions_in.jsonl
             journal/suggestions_out.jsonl
           retention-days: 90
+
+      - name: Sync analyst suggestions to flowtrader-dashboard repo
+        if: always()
+        env:
+          DASHBOARD_PUSH_TOKEN: ${{ secrets.DASHBOARD_PUSH_TOKEN }}
+        run: |
+          if [ -z "$DASHBOARD_PUSH_TOKEN" ]; then
+            echo "::warning::DASHBOARD_PUSH_TOKEN not set — skipping analyst sync"
+            exit 0
+          fi
+
+          git clone --depth 1 \
+            "https://x-access-token:${DASHBOARD_PUSH_TOKEN}@github.com/qlategan-stack/flowtrader-dashboard.git" \
+            "$RUNNER_TEMP/analyst-dashboard"
+
+          python scripts/ci_sync_journal.py --dashboard-path "$RUNNER_TEMP/analyst-dashboard"
+
+          cd "$RUNNER_TEMP/analyst-dashboard"
+          git config user.name  "FlowTrader CI"
+          git config user.email "ci@flowtrader.local"
+          git add journal/suggestions_in.jsonl 2>/dev/null || true
+          git add journal/suggestions_out.jsonl 2>/dev/null || true
+          git add journal/weekly_research_memo.json 2>/dev/null || true
+          git add journal/weekly_research_memo.md 2>/dev/null || true
+          git add journal/trades.jsonl 2>/dev/null || true
+
+          if git diff --cached --quiet; then
+            echo "No analyst changes to push"
+            exit 0
+          fi
+
+          MSG="chore: CI analyst sync (run ${{ github.run_id }})"
+          git commit -m "$MSG"
+          git push origin main
 
       - name: Save updated journal to cache
         uses: actions/cache/save@v4

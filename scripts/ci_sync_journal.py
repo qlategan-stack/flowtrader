@@ -69,6 +69,21 @@ def sync_trades(bot_journal: Path, dash_journal: Path) -> int:
     return len(new_entries)
 
 
+def sync_file(src: Path, dst: Path) -> bool:
+    """Overwrite dst with src if src exists. Returns True if dst changed."""
+    if not src.exists():
+        return False
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    existing = dst.read_bytes() if dst.exists() else b""
+    new_content = src.read_bytes()
+    if existing == new_content:
+        print(f"[ci-sync] {src.name}: no change")
+        return False
+    dst.write_bytes(new_content)
+    print(f"[ci-sync] {src.name}: updated ({len(new_content)} bytes)")
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -89,6 +104,11 @@ def main() -> int:
         bot_journal  = bot_root  / "journal" / "trades.jsonl",
         dash_journal = dash_root / "journal" / "trades.jsonl",
     )
+
+    # Sync analyst suggestions and research memo so the dashboard displays
+    # current analyst output regardless of whether the local push ran.
+    for fname in ("suggestions_in.jsonl", "suggestions_out.jsonl", "weekly_research_memo.json"):
+        sync_file(bot_root / "journal" / fname, dash_root / "journal" / fname)
 
     return 0
 
