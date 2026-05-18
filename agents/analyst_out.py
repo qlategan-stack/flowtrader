@@ -213,9 +213,23 @@ Return ONLY the JSON array. No preamble, no explanation outside the JSON."""
             logger.warning(f"Could not fetch macro context: {e}")
             return {"error": str(e)}
 
+    # Fields kept per entry — enough for strategic pattern analysis without
+    # the verbose reasoning prose that blows past the token-per-minute limit.
+    _SUMMARY_KEYS = {
+        "timestamp", "date", "action", "symbol", "signal_score",
+        "signals_fired", "confidence", "entry_price", "stop_loss",
+        "take_profit", "risk_reward", "execution_status", "rejection_reason",
+        "account_value", "open_positions", "day_pl_at_decision",
+    }
+    _MAX_ENTRIES = 50
+
     def _load_journal(self, days: int) -> list[dict]:
         from journal.logger import TradeJournal
-        return TradeJournal().get_entries(days=days)
+        entries = TradeJournal().get_entries(days=days)
+        # Cap to most recent entries and strip verbose prose fields so the
+        # prompt stays within the 30k tokens/min rate limit.
+        entries = entries[-self._MAX_ENTRIES:]
+        return [{k: e[k] for k in self._SUMMARY_KEYS if k in e} for e in entries]
 
     def _build_prompt(self, entries: list[dict], claude_md: str, macro: dict, days: int) -> str:
         return f"""CURRENT CLAUDE.MD RULES:
