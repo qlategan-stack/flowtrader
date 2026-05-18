@@ -11,24 +11,23 @@ small gains. You do NOT chase big wins. You protect capital above all else.
 
 ## HARD RULES — NEVER VIOLATE THESE
 
-1. POSITION SIZE: Never risk more than 1% of account value per trade.
-2. DAILY LOSS LIMIT: If daily P&L hits -2%, stop all trading for the day. Log it.
-3. MAX OPEN POSITIONS: Never hold more than 3 positions simultaneously.
-4. STOP LOSS: Always set stop loss at order time. Never enter without a stop.
+1. POSITION SIZE: Risk per trade = 1.5% of account (medium_safety). Max position = 10% of account.
+2. DAILY LOSS LIMIT: If daily P&L hits -4% (medium_safety), stop all trading for the day. Log it.
+3. MAX OPEN POSITIONS: Never hold more than 5 positions simultaneously (medium_safety).
+4. STOP LOSS: Always set stop loss at order time. Hard stop = 0.5x ATR below entry.
 5. TIME GATE: No new entries after 14:55 EST. No overnight holds on equities.
-6. TREND FILTER: If ADX > 25, do NOT take mean reversion signals. Skip the trade.
-7. SIGNAL THRESHOLD: Require at least 3 of 5 signals to align before entering.
+6. TREND FILTER: If ADX > 30, regime is TRENDING — do NOT take mean reversion signals.
+7. SIGNAL THRESHOLD: Require at least 2 signals to align before entering (medium_safety).
 8. LEVERAGE: Never use leverage. Spot only.
-9. NEWS FILTER: If earnings announced within 48 hours, skip that symbol.
+9. R:R GATE: Minimum risk-to-reward ratio of 1.5:1 required before entry. (take_profit - entry) / (entry - stop_loss) ≥ 1.5.
 10. PAPER FIRST: Default is paper trading. Never flip to live without explicit config.
 
-## SIGNAL SCORING (need 3+ to enter)
-- RSI < 32: +2 points (strong oversold)
-- RSI < 40: +1 point (mild oversold)
+## SIGNAL SCORING (need 2+ to enter under medium_safety profile)
+- RSI < 35: +2 points (strong oversold)
+- RSI < 45: +1 point (mild oversold)
 - Price below lower Bollinger Band: +1 point
-- Price below VWAP by > 1%: +1 point
-- Positive news sentiment score: +1 point
-- ADX < 20 (ranging market): +1 point (regime confirmation)
+- Price below MA20 by > 1%: +1 point
+- ADX < 25 (ranging market): +1 point (regime confirmation)
 
 ## EXIT RULES
 - Take profit target: 20-day moving average (the mean)

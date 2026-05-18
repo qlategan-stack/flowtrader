@@ -11,3 +11,4 @@ git -C "C:\Users\quint\OneDrive\1.Projects\Flowtrader\flowtrader-dashboard" pull
 
 "C:\Python313\python.exe" main.py %MODE% >> "scripts\run_bot.log" 2>&1
 "C:\Python313\python.exe" scripts\push_journal.py >> "scripts\run_bot.log" 2>&1
+"C:\Python313\python.exe" "C:\Users\quint\OneDrive\1.Projects\Flowtrader\flowtrader-dashboard\scripts\build_positions_dashboard.py" >> "scripts\run_bot.log" 2>&1

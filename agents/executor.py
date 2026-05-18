@@ -171,6 +171,7 @@ class OrderExecutor:
         current_positions: int,
         day_pl: float,
         existing_qty: float = 0.0,
+        take_profit: float = 0.0,
     ) -> tuple[bool, str]:
         """
         Guardrail validation against the active risk profile.
@@ -244,6 +245,13 @@ class OrderExecutor:
             return False, f"Stop loss too far ({stop_distance_pct:.1%} from entry, max {max_stop:.0%})"
         if stop_loss >= entry_price:
             return False, "Stop loss must be BELOW entry for long positions"
+
+        # 7. Minimum R:R ratio gate (approved suggestion in-20260511-002)
+        # Prevents entering trades where the profit target doesn't justify the risk.
+        if take_profit and take_profit > entry_price and (entry_price - stop_loss) > 0:
+            rr_ratio = (take_profit - entry_price) / (entry_price - stop_loss)
+            if rr_ratio < 1.5:
+                return False, f"R:R ratio too low ({rr_ratio:.2f}:1, minimum 1.5:1)"
 
         return True, "All checks passed"
 
@@ -371,12 +379,26 @@ class OrderExecutor:
         # Existing-quantity lookup for the no-adds rule. Equities only — the
         # Bybit balance dict doesn't expose per-symbol holdings the same way,
         # and Bybit doesn't have Alpaca's bracket-OCO cancel issue.
+        # Also checks open Alpaca orders to catch the race condition where a
+        # bracket BUY was submitted but hasn't appeared in positions yet.
         existing_qty = 0.0
         if not is_crypto:
             for pos in (account.get("positions") or []):
                 if pos.get("symbol") == symbol:
                     existing_qty = float(pos.get("qty", 0))
                     break
+            if existing_qty == 0 and action == "BUY" and self.alpaca_available:
+                try:
+                    from alpaca.trading.requests import GetOrdersRequest
+                    from alpaca.trading.enums import QueryOrderStatus
+                    open_orders = self.trading_client.get_orders(
+                        filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol])
+                    )
+                    if open_orders:
+                        existing_qty = sum(float(o.qty or 0) for o in open_orders)
+                        logger.info(f"No-adds: found {len(open_orders)} open order(s) for {symbol} totalling {existing_qty} shares — treating as existing position")
+                except Exception as e:
+                    logger.warning(f"Could not check open orders for {symbol}: {e}")
 
         # ── Validate ──────────────────────────────────────────────────────────
         is_valid, reason = self.validate_order(
@@ -389,6 +411,7 @@ class OrderExecutor:
             current_positions=current_positions,
             day_pl=day_pl,
             existing_qty=existing_qty,
+            take_profit=take_profit,
         )
 
         if not is_valid:

@@ -760,7 +760,7 @@ class BinanceFetcher:
                 "total_usdt":     round(usdt_total, 2),
                 "free_usdt":      round(usdt_free, 2),
                 "position_value": round(position_value, 2),
-                "open_positions": len(coin_amounts),
+                "open_positions": len(positions),
                 "positions":      positions,
                 "exchange":       "binance",
                 "testnet":        self.testnet,
