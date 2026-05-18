@@ -62,7 +62,8 @@ class ResearchAnalyst:
         """Fetch VIX (fear index) — key macro indicator."""
         try:
             import yfinance as yf
-            vix = round(yf.Ticker("^VIX").fast_info["lastPrice"], 2)
+            _vix_hist = yf.Ticker("^VIX").history(period="5d")
+            vix = round(float(_vix_hist["Close"].iloc[-1]), 2)
 
             if vix < 15:
                 interpretation = "LOW — market complacent, good for mean reversion"

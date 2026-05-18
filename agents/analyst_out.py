@@ -182,7 +182,8 @@ Return ONLY the JSON array. No preamble, no explanation outside the JSON."""
 
     def _fetch_macro_context(self) -> dict:
         try:
-            vix_close = round(yf.Ticker("^VIX").fast_info["lastPrice"], 2)
+            vix_hist = yf.Ticker("^VIX").history(period="5d")
+            vix_close = round(float(vix_hist["Close"].iloc[-1]), 2)
             vix_regime = "high" if vix_close > 25 else "elevated" if vix_close > 18 else "low"
 
             spy_hist = yf.Ticker("SPY").history(period=_SPY_HISTORY_PERIOD)
