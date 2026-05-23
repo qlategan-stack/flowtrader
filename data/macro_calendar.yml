@@ -1,0 +1,28 @@
+# Macro event calendar — drives out-of-cycle research memo refreshes.
+# Refresh annually each December with the next year's FOMC + CPI dates.
+# FOMC: federalreserve.gov/monetarypolicy/fomccalendars.htm
+# CPI:  bls.gov/schedule/news_release/cpi.htm
+
+fomc:
+  - 2026-01-28
+  - 2026-03-18
+  - 2026-04-29
+  - 2026-06-17
+  - 2026-07-29
+  - 2026-09-16
+  - 2026-10-28
+  - 2026-12-09
+
+cpi:
+  - 2026-01-14
+  - 2026-02-11
+  - 2026-03-11
+  - 2026-04-15
+  - 2026-05-13
+  - 2026-06-10
+  - 2026-07-15
+  - 2026-08-12
+  - 2026-09-10
+  - 2026-10-15
+  - 2026-11-12
+  - 2026-12-10

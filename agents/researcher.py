@@ -30,6 +30,97 @@ logger = logging.getLogger(__name__)
 MEMO_DIR = Path("journal")
 MEMO_FILE = MEMO_DIR / "weekly_research_memo.md"
 MEMO_JSON = MEMO_DIR / "weekly_research_memo.json"
+REFRESH_LOG = MEMO_DIR / "memo_refresh_log.json"
+MACRO_CALENDAR = Path(__file__).resolve().parent.parent / "data" / "macro_calendar.yml"
+REFRESH_COOLDOWN_HOURS = 6
+VIX_DRIFT_THRESHOLD = 0.15  # 15% absolute change vs memo
+
+
+def _vix_band(vix: float) -> str:
+    if vix < 15: return "LOW"
+    if vix < 20: return "NORMAL"
+    if vix < 30: return "ELEVATED"
+    return "HIGH"
+
+
+def _fetch_current_vix() -> float:
+    """Lightweight VIX fetch — no LLM, no auth, just yfinance."""
+    import yfinance as yf
+    hist = yf.Ticker("^VIX").history(period="5d")
+    return round(float(hist["Close"].iloc[-1]), 2)
+
+
+def should_refresh_memo() -> tuple[bool, str]:
+    """
+    Decide whether the research memo is stale enough to re-run mid-week.
+
+    Returns (should_refresh, reason). Reasons:
+      - "No memo on disk"
+      - "VIX drift NN% (memo→current)"
+      - "VIX regime crossed (BAND→BAND)"
+      - "FOMC|CPI event today"
+      - "Cooldown active (last refresh N.Nh ago)"
+    """
+    # Cooldown: never refresh more than once per REFRESH_COOLDOWN_HOURS.
+    if REFRESH_LOG.exists():
+        try:
+            last = json.loads(REFRESH_LOG.read_text())
+            last_ts = datetime.fromisoformat(last["timestamp"])
+            age_h = (datetime.now(pytz.UTC) - last_ts).total_seconds() / 3600
+            if age_h < REFRESH_COOLDOWN_HOURS:
+                return False, f"Cooldown active (last refresh {age_h:.1f}h ago)"
+        except Exception as e:
+            logger.warning(f"Refresh log unreadable, ignoring cooldown: {e}")
+
+    # Macro calendar check — runs even if no memo exists.
+    today = datetime.now(pytz.timezone("America/New_York")).date().isoformat()
+    if MACRO_CALENDAR.exists():
+        try:
+            import yaml
+            cal = yaml.safe_load(MACRO_CALENDAR.read_text())
+            for event_type, dates in cal.items():
+                if today in (dates or []):
+                    return True, f"{event_type.upper()} event today ({today})"
+        except Exception as e:
+            logger.warning(f"Macro calendar unreadable: {e}")
+
+    # No memo → always refresh.
+    if not MEMO_JSON.exists():
+        return True, "No memo on disk"
+
+    # VIX-based triggers.
+    try:
+        memo = json.loads(MEMO_JSON.read_text())
+        regime = memo.get("market_regime")
+        if not isinstance(regime, dict) or "vix_level" not in regime:
+            return True, "Memo missing structured market_regime (likely error stub)"
+        memo_vix = float(regime["vix_level"])
+    except Exception as e:
+        return True, f"Memo unreadable, refreshing: {e}"
+
+    try:
+        current_vix = _fetch_current_vix()
+    except Exception as e:
+        logger.warning(f"VIX fetch failed, skipping drift check: {e}")
+        return False, f"VIX fetch error: {e}"
+
+    drift = abs(current_vix - memo_vix) / memo_vix if memo_vix else 0
+    if drift >= VIX_DRIFT_THRESHOLD:
+        return True, f"VIX drift {drift:.0%} ({memo_vix}→{current_vix})"
+
+    if _vix_band(memo_vix) != _vix_band(current_vix):
+        return True, f"VIX regime crossed ({_vix_band(memo_vix)}→{_vix_band(current_vix)} | {memo_vix}→{current_vix})"
+
+    return False, f"Stable (VIX {memo_vix}→{current_vix}, drift {drift:.1%})"
+
+
+def record_refresh(reason: str) -> None:
+    """Stamp the refresh log so the cooldown is enforced on subsequent runs."""
+    REFRESH_LOG.parent.mkdir(exist_ok=True)
+    REFRESH_LOG.write_text(json.dumps({
+        "timestamp": datetime.now(pytz.UTC).isoformat(),
+        "reason": reason,
+    }, indent=2))
 
 
 class ResearchAnalyst:

@@ -8,6 +8,7 @@ Run this file on schedule via GitHub Actions or cron.
 import os
 import json
 import logging
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -17,17 +18,95 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
+# ── SSL fix for Norton Antivirus TLS inspection (Windows) ─────────────────────
+# Norton re-signs TLS certificates with its own CA whose Basic Constraints
+# extension is not marked critical.  Python 3.13 rejects this under strict
+# RFC 5280 enforcement, breaking every HTTPS call (Alpaca, Anthropic, Binance,
+# Bybit, Telegram).  Patching the default HTTPAdapter before any Session is
+# created relaxes only that specific check while keeping full cert validation.
+# Root-caused 2026-05-20 (C-2 in audit) — issuer: "Norton Web/Mail Shield Root".
+import ssl as _ssl
+from requests.adapters import HTTPAdapter as _HTTPAdapter
+from urllib3.util.ssl_ import create_urllib3_context as _create_ctx
+import requests as _requests
+
+
+class _NortonCompatAdapter(_HTTPAdapter):
+    def init_poolmanager(self, *args, **kwargs):
+        ctx = _create_ctx()
+        ctx.load_default_certs()
+        ctx.verify_flags &= ~_ssl.VERIFY_X509_STRICT
+        kwargs["ssl_context"] = ctx
+        super().init_poolmanager(*args, **kwargs)
+
+    def proxy_manager_for(self, proxy, **proxy_kwargs):
+        ctx = _create_ctx()
+        ctx.load_default_certs()
+        ctx.verify_flags &= ~_ssl.VERIFY_X509_STRICT
+        proxy_kwargs["ssl_context"] = ctx
+        return super().proxy_manager_for(proxy, **proxy_kwargs)
+
+
+# Monkey-patch Session so every library that uses requests gets the fix.
+_orig_session_init = _requests.Session.__init__
+
+
+def _patched_session_init(self, *args, **kwargs):
+    _orig_session_init(self, *args, **kwargs)
+    self.mount("https://", _NortonCompatAdapter())
+    self.mount("http://",  _NortonCompatAdapter())
+
+
+_requests.Session.__init__ = _patched_session_init
+# ── End SSL fix ───────────────────────────────────────────────────────────────
+
 Path("journal").mkdir(exist_ok=True)
 
 # ── Logging setup ──────────────────────────────────────────────────────────────
+# Secret-redacting filter — applied to every record before it reaches
+# stdout or bot.log. journal/bot.log is synced to the public
+# flowtrader-dashboard repo via a GitHub Action, so anything that leaks
+# into a log eventually becomes public. Patterns covered:
+#   • Telegram bot tokens:   bot<digits>:<token>
+#   • Generic secret= / token= / api_key= in query strings
+#   • Bearer / Authorization tokens
+_SECRET_PATTERNS = [
+    (re.compile(r"bot\d{6,}:[A-Za-z0-9_\-]{20,}"), "bot<REDACTED>"),
+    (re.compile(r"(?i)(api[_-]?key|secret|token|password)=([^\s&'\"]{8,})"), r"\1=<REDACTED>"),
+    (re.compile(r"(?i)Bearer\s+[A-Za-z0-9._\-]{16,}"), "Bearer <REDACTED>"),
+]
+
+
+class _SecretRedactingFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        for pat, repl in _SECRET_PATTERNS:
+            msg = pat.sub(repl, msg)
+        record.msg = msg
+        record.args = None
+        return True
+
+
+_stdout_handler = logging.StreamHandler(sys.stdout)
+# Rotate bot.log at 10 MB with 5 backups (bot.log → bot.log.1 → … → bot.log.5).
+# Unrotated logs grew to 10k+ lines and started bloating audits — flagged as L-5
+# on 2026-05-23.
+from logging.handlers import RotatingFileHandler as _RotatingFileHandler  # noqa: E402
+_file_handler = _RotatingFileHandler(
+    "journal/bot.log", mode="a", maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+)
+for _h in (_stdout_handler, _file_handler):
+    _h.addFilter(_SecretRedactingFilter())
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("journal/bot.log", mode="a")
-    ]
+    handlers=[_stdout_handler, _file_handler],
 )
+# Attach the redactor to the root logger as well so third-party libraries
+# (anthropic, ccxt, urllib3, telegram) that get their own loggers via
+# logging.getLogger(...) still pass through the filter.
+logging.getLogger().addFilter(_SecretRedactingFilter())
 logger = logging.getLogger("FlowTrader")
 
 # ── Import modules ─────────────────────────────────────────────────────────────
@@ -445,6 +524,18 @@ def send_telegram_notification(
 
     if action in ["BUY", "SELL"]:
         symbol = decision.get("symbol") or "?"
+        # For crypto trades, the executor attaches the venue (Bybit/Binance)
+        # account snapshot — show that instead of the Alpaca paper account so
+        # the displayed % cap, total, and the "10% of account" rejection
+        # message all reference the same balance.
+        venue_account = execution.get("venue_account") if isinstance(execution, dict) else None
+        if venue_account:
+            venue_value = float(venue_account.get("account_value", 0) or 0)
+            exchange    = str(venue_account.get("exchange", "crypto")).capitalize()
+            # Crypto venues don't expose a session day_pl, so the value would
+            # be the Alpaca paper account's P&L — confusing on a Bybit/Binance
+            # message. Show the venue balance alone.
+            acct_line = f"💼 <b>${venue_value:,.0f}</b> ({exchange})"
         entry  = float(decision.get("entry_price") or 0)
         stop   = float(decision.get("stop_loss")   or 0)
         target = float(decision.get("take_profit") or 0)
@@ -560,7 +651,7 @@ if __name__ == "__main__":
         review = run_weekly_review(config)
         print(review)
     elif mode == "research-analyst":
-        from agents.researcher import ResearchAnalyst
+        from agents.researcher import ResearchAnalyst, record_refresh
         watchlist        = config.get("watchlist", {}).get("equities", [])
         crypto_watchlist = config.get("watchlist", {}).get("crypto", [])
         analyst = ResearchAnalyst()
@@ -568,7 +659,42 @@ if __name__ == "__main__":
             current_watchlist=watchlist,
             crypto_watchlist=crypto_watchlist,
         )
+        record_refresh("scheduled")
         print(json.dumps(result, indent=2))
+
+    elif mode == "research-analyst-if-stale":
+        # Cheap check: read memo, fetch VIX, compare. If stale, run full analyst.
+        from agents.researcher import (
+            ResearchAnalyst, should_refresh_memo, record_refresh,
+        )
+        refresh, reason = should_refresh_memo()
+        logger.info(f"Memo staleness check: refresh={refresh} reason={reason}")
+        if not refresh:
+            print(json.dumps({"refreshed": False, "reason": reason}))
+        else:
+            watchlist        = config.get("watchlist", {}).get("equities", [])
+            crypto_watchlist = config.get("watchlist", {}).get("crypto", [])
+            analyst = ResearchAnalyst()
+            result = analyst.run_full_analysis(
+                current_watchlist=watchlist,
+                crypto_watchlist=crypto_watchlist,
+            )
+            record_refresh(reason)
+            # Telegram ping so you know an out-of-cycle refresh fired.
+            try:
+                tg_token = os.getenv("TELEGRAM_BOT_TOKEN")
+                tg_chat  = os.getenv("TELEGRAM_CHAT_ID")
+                if tg_token and tg_chat:
+                    import requests as _req
+                    _req.post(
+                        f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                        json={"chat_id": tg_chat,
+                              "text": f"🔄 FlowTrader memo refreshed mid-week\nReason: {reason}"},
+                        timeout=10,
+                    )
+            except Exception as e:
+                logger.warning(f"Refresh notification failed: {e}")
+            print(json.dumps({"refreshed": True, "reason": reason, **result}))
     elif mode == "test":
         # Quick test — just fetch data and log, no trades
         fetcher = MarketDataFetcher()

@@ -31,6 +31,14 @@ on:
     # ── Daily analyst run — 17:30 EST (21:30 UTC) weekdays ────────────────
     - cron: '30 21 * * 1-5'   # 17:30 EST = 21:30 UTC
 
+    # ── Memo staleness check — :15 past the hour, every weekday hour ─────
+    # Cheap check (one yfinance call) that fires the Research Analyst out of
+    # cycle if VIX has drifted ≥15% or crossed a regime band, or if today is
+    # an FOMC/CPI date. The job itself enforces a 6-hour cooldown so this
+    # cron can fire freely without spamming refreshes.
+    # Scheduled at :15 to avoid colliding with the :00/:30 trading scans.
+    - cron: '15 14-19 * * 1-5'  # 10:15–15:15 EST hourly
+
 
   # ── Manual trigger (for testing) ─────────────────────────────────────────
   workflow_dispatch:
@@ -130,6 +138,13 @@ jobs:
           if [ "$HOUR" = "22" ] && { [ "$DAY" = "7" ] || [ "$DAY" = "3" ]; }; then
             MODE="research-analyst"
           fi
+          # Memo staleness check — :15 past every weekday hour during market.
+          # The script itself decides whether to actually re-run the analyst
+          # (VIX drift, regime band, FOMC/CPI date) and enforces a 6h cooldown.
+          MINUTE=$(date +%M)
+          if [ "$MINUTE" = "15" ] && [ "$DAY" -le "5" ]; then
+            MODE="research-analyst-if-stale"
+          fi
 
           echo "Running FlowTrader in mode: $MODE"
           python main.py $MODE
@@ -155,6 +170,7 @@ jobs:
             journal/weekly_summary.md
             journal/weekly_research_memo.md
             journal/weekly_research_memo.json
+            journal/memo_refresh_log.json
           retention-days: 90  # Keep 90 days of history
 
       # ── 10. Save updated journal to cache ────────────────────────────────
