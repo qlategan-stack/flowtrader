@@ -191,42 +191,99 @@ def check_exits(market_snapshot: dict, account: dict) -> list[dict]:
     return decisions
 
 
-def is_market_hours(config: dict) -> tuple[bool, str]:
+def is_trading_window(config: dict) -> tuple[bool, str]:
     """
-    Check if US market is open and within trading window.
-    Returns (is_open, reason).
+    Check whether the current time falls inside the configured 12-hour
+    trading window (default 08:00–20:00 EST, Mon–Fri).
+
+    Both equities AND crypto respect this gate — the bot is intentionally
+    dark for 12 h overnight so no new positions are opened.  Existing
+    bracket orders (stop-loss / take-profit) stay live on the exchange
+    24/7 regardless — the broker manages those independently.
+
+    Returns (entries_allowed, reason).
     """
     est = pytz.timezone("America/New_York")
     now = datetime.now(est)
+    sched = config.get("schedule", {})
 
-    # Weekend check
+    # Weekend check — no trading Saturday or Sunday
     if now.weekday() >= 5:
-        return False, f"Weekend — market closed ({now.strftime('%A')})"
+        return False, f"Weekend — trading window closed ({now.strftime('%A')})"
 
-    # Market hours: 9:30 AM to 4:00 PM EST
-    market_open = now.replace(hour=9, minute=30, second=0)
-    market_close = now.replace(hour=16, minute=0, second=0)
-    cutoff = now.replace(hour=14, minute=55, second=0)
+    win_start_h = sched.get("window_start_hour",  8)
+    win_start_m = sched.get("window_start_minute", 0)
+    win_end_h   = sched.get("window_end_hour",   20)
+    win_end_m   = sched.get("window_end_minute",  0)
+    cutoff_mins = sched.get("window_entry_cutoff_minutes", 15)
 
-    if now < market_open:
-        return False, f"Pre-market ({now.strftime('%H:%M')} EST)"
+    window_open  = now.replace(hour=win_start_h, minute=win_start_m, second=0, microsecond=0)
+    window_close = now.replace(hour=win_end_h,   minute=win_end_m,   second=0, microsecond=0)
 
-    if now > market_close:
-        return False, f"After-hours ({now.strftime('%H:%M')} EST)"
+    # Entry cutoff: N minutes before window end
+    from datetime import timedelta
+    entry_cutoff = window_close - timedelta(minutes=cutoff_mins)
 
-    if now > cutoff:
-        return False, f"Time gate active — no new entries after 14:55 EST ({now.strftime('%H:%M')} EST)"
+    if now < window_open:
+        mins_to_open = int((window_open - now).total_seconds() / 60)
+        return False, (
+            f"Off-window — opens at {win_start_h:02d}:{win_start_m:02d} EST "
+            f"({mins_to_open} min away, now {now.strftime('%H:%M')} EST)"
+        )
 
-    # Buffer after open
-    buffer_end = now.replace(
-        hour=9,
-        minute=30 + config.get("schedule", {}).get("market_open_buffer_minutes", 15),
-        second=0
-    )
+    if now >= window_close:
+        return False, (
+            f"Off-window — closed at {win_end_h:02d}:{win_end_m:02d} EST "
+            f"(now {now.strftime('%H:%M')} EST). "
+            f"Existing bracket orders remain active on the exchange."
+        )
+
+    if now >= entry_cutoff:
+        return False, (
+            f"Entry cutoff reached — no new entries in final {cutoff_mins} min "
+            f"of window ({now.strftime('%H:%M')} EST, cutoff {entry_cutoff.strftime('%H:%M')} EST)"
+        )
+
+    # Equity-specific: don't trade in the first N minutes after equity open
+    equity_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    buffer_mins = sched.get("market_open_buffer_minutes", 15)
+    if now >= equity_open:
+        buffer_end = equity_open.replace(minute=equity_open.minute + buffer_mins)
+        if now < buffer_end:
+            # Window is open, but equity volatility buffer applies.
+            # Crypto is fine to trade; equities will be gated separately below.
+            pass  # caller handles equity vs crypto split
+
+    return True, f"Trading window open ({now.strftime('%H:%M')} EST, window {win_start_h:02d}:{win_start_m:02d}–{win_end_h:02d}:{win_end_m:02d} EST)"
+
+
+def is_equity_active(config: dict, now=None) -> tuple[bool, str]:
+    """
+    Within the trading window, check whether US equity market is open
+    and past the volatility buffer. Crypto ignores this — it is active
+    for the full 12-hour window.
+    Returns (equities_allowed, reason).
+    """
+    est = pytz.timezone("America/New_York")
+    if now is None:
+        now = datetime.now(est)
+    sched = config.get("schedule", {})
+
+    equity_open  = now.replace(hour=9,  minute=30, second=0, microsecond=0)
+    equity_close = now.replace(hour=16, minute=0,  second=0, microsecond=0)
+    buffer_mins  = sched.get("market_open_buffer_minutes", 15)
+
+    from datetime import timedelta
+    buffer_end = equity_open + timedelta(minutes=buffer_mins)
+
+    if now < equity_open:
+        return False, f"Pre-equity-open ({now.strftime('%H:%M')} EST)"
+    if now >= equity_close:
+        return False, f"Equity market closed ({now.strftime('%H:%M')} EST)"
     if now < buffer_end:
-        return False, f"Market just opened — waiting for volatility to settle"
+        return False, f"Equity volatility buffer ({now.strftime('%H:%M')} EST, trading starts {buffer_end.strftime('%H:%M')} EST)"
 
-    return True, f"Market open ({now.strftime('%H:%M')} EST)"
+    return True, f"Equity market open ({now.strftime('%H:%M')} EST)"
 
 
 def run_trading_session(config: dict, mode: str = "full") -> dict:
@@ -267,21 +324,31 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
             "message": "Trading stopped for the day due to loss limit"
         }
 
-    # Step 2: Build market snapshot — combine equities (only when US market open)
-    # with crypto (always, since it trades 24/7)
-    watchlist_cfg   = config.get("watchlist", {})
-    equity_symbols  = list(watchlist_cfg.get("equities", []))
-    crypto_symbols  = list(watchlist_cfg.get("crypto", []))
+    # Step 2: Build market snapshot.
+    # Both equities and crypto are gated to the 12-hour trading window
+    # (08:00–20:00 EST, Mon–Fri). Outside the window the bot exits early —
+    # no scanning, no Claude call, no journal entry.  Existing bracket orders
+    # remain active on the exchange regardless (broker manages them).
+    watchlist_cfg  = config.get("watchlist", {})
+    equity_symbols = list(watchlist_cfg.get("equities", []))
+    crypto_symbols = list(watchlist_cfg.get("crypto", []))
 
-    market_open, market_reason = is_market_hours(config)
-    if not market_open:
-        logger.info(f"Equity market gated off: {market_reason} — scanning crypto only")
+    window_open, window_reason = is_trading_window(config)
+    if not window_open:
+        logger.info(f"Trading window closed: {window_reason}")
+        return {"status": "OFF_WINDOW", "message": window_reason}
+
+    # Within the window, equities are additionally gated to exchange hours
+    # (09:45–16:00 EST). Crypto trades for the full window.
+    equity_active, equity_reason = is_equity_active(config)
+    if not equity_active:
+        logger.info(f"Equity market gated off: {equity_reason} — scanning crypto only")
         equity_symbols = []
 
     watchlist = equity_symbols + crypto_symbols
     if not watchlist:
-        logger.info("No symbols to scan (equities gated, no crypto configured). Exiting.")
-        return {"status": "NO_WATCHLIST", "message": market_reason}
+        logger.info("No symbols to scan this cycle. Exiting.")
+        return {"status": "NO_WATCHLIST", "message": window_reason}
 
     logger.info(f"Scanning {len(watchlist)} symbols ({len(equity_symbols)} equity, {len(crypto_symbols)} crypto)...")
 

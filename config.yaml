@@ -5,17 +5,24 @@
 paper_trading: true          # ALWAYS start on paper. Change to false only after 90 days.
 live_trading_confirmed: false # Second safety flag — both must be false for paper mode
 
-# ── ACCOUNT RISK SETTINGS ─────────────────────────────────
+# ── EMERGENCY STOP ────────────────────────────────────────
+# Only `risk.max_open_positions` is read at runtime from this block.
+# Setting it to 0 is a HARD KILL-SWITCH — refuses all new entries regardless of
+# the active profile in journal/risk_profile.json. Exits still execute so an
+# operator can flatten positions while the bot keeps running for data/dashboard.
+# Set to any positive integer (or delete the field) to resume normal operation,
+# at which point the active profile's max_open_positions governs.
+# All other risk parameters (position_pct, daily_loss, signal_score, R:R) come
+# from the active profile in `risk_profiles` below — fields here are ignored.
 risk:
-  max_position_pct: 0.01     # 1% of account per trade
-  max_daily_loss_pct: 0.02   # Stop trading if down 2% on the day
-  max_open_positions: 3      # Never hold more than 3 positions at once
-  min_signal_score: 3        # Minimum signals required to enter (out of 6)
-  reward_to_risk_min: 1.5    # Minimum R:R ratio required
+  max_open_positions: 5      # set to 0 to engage the emergency stop (halts new entries)
 
 # ── RISK PROFILES ─────────────────────────────────────────
-# Active profile is read from journal/risk_profile.json (written by dashboard).
-# high_safety is the default fallback if no profile file is present.
+# Active profile is read from risk_profile.json. The executor searches:
+#   1. trading-bot/trading-bot/journal/risk_profile.json   (CI / GitHub Actions)
+#   2. flowtrader-dashboard/journal/risk_profile.json      (local dev / dashboard)
+# whichever exists first. high_safety is the fallback if neither is found
+# (executor logs an ERROR in that case so the gap is visible).
 risk_profiles:
   high_safety:
     max_open_positions: 3
@@ -93,10 +100,30 @@ watchlist:
 
 # ── SCHEDULE ──────────────────────────────────────────────
 schedule:
-  market_open_buffer_minutes: 15   # Don't trade first 15 min (volatile)
-  market_close_cutoff_minutes: 5   # Stop new entries 5 min before close
+  market_open_buffer_minutes: 15   # Don't trade first 15 min after equity open (volatile)
   research_interval_minutes: 30    # How often to rescan the watchlist
-  crypto_24_7: true                # Crypto runs around the clock
+
+  # ── 12-HOUR TRADING WINDOW ─────────────────────────────
+  # Both equities AND crypto are gated to this window.
+  # New entries are blocked outside window_start / window_entry_cutoff.
+  # Existing bracket orders (stop-loss / take-profit) remain live on the
+  # exchange 24/7 regardless of this gate — the broker manages them.
+  #
+  # Window: 08:00–20:00 EST  (12 h)
+  #   • Covers pre-US-market (08:00–09:30), full equity session,
+  #     and peak US/EU crypto liquidity through evening.
+  #   • Entry cutoff 19:45 (15 min before window end) so no new position
+  #     is opened in the last few minutes.
+  #   • 20:00–08:00 EST is the off-window: no new entries, bot idles.
+  #
+  # Change these two values to shift the window without touching code.
+  window_start_hour: 8       # 08:00 EST — window opens
+  window_start_minute: 0
+  window_end_hour: 20        # 20:00 EST — window closes (soft: entries only)
+  window_end_minute: 0
+  window_entry_cutoff_minutes: 15  # Stop new entries N min before window end
+
+  crypto_24_7: false         # Crypto now respects the 12-h window (not 24/7)
 
 # ── API ENDPOINTS ─────────────────────────────────────────
 alpaca:

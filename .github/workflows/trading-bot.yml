@@ -1,12 +1,19 @@
 name: FlowTrader — Trading Bot
 
 on:
-  # ── Scheduled runs during US market hours ────────────────────────────────
+  # ── Scheduled runs — 12-hour trading window 08:00–20:00 EST ─────────────
+  # Every 30 min, Mon–Fri. GitHub Actions uses UTC; during EDT (UTC-4):
+  #   08:00 EST = 12:00 UTC   20:00 EST = 00:00 UTC (next day)
+  # main.py enforces the window gate in code, so runs outside 08:00–19:45
+  # EST exit immediately with OFF_WINDOW status (no Claude call, no trade).
+  #
+  # Pre-market / crypto window: 08:00–09:30 EST (12:00–13:00 UTC)
   schedule:
-    # Every 30 minutes on weekdays, 09:30 to 14:30 EST
-    # GitHub Actions uses UTC. EST = UTC-5, EDT = UTC-4.
-    # These times cover 09:30–14:30 EST during EDT (UTC-4):
-    - cron: '30 13 * * 1-5'   # 09:30 EST (EDT: 13:30 UTC)
+    - cron: '0 12 * * 1-5'    # 08:00 EST
+    - cron: '30 12 * * 1-5'   # 08:30 EST
+    - cron: '0 13 * * 1-5'    # 09:00 EST
+    - cron: '30 13 * * 1-5'   # 09:30 EST — equity open
+    # Equity + crypto: 10:00–19:30 EST (14:00–23:30 UTC)
     - cron: '0 14 * * 1-5'    # 10:00 EST
     - cron: '30 14 * * 1-5'   # 10:30 EST
     - cron: '0 15 * * 1-5'    # 11:00 EST
@@ -16,7 +23,18 @@ on:
     - cron: '0 17 * * 1-5'    # 13:00 EST
     - cron: '30 17 * * 1-5'   # 13:30 EST
     - cron: '0 18 * * 1-5'    # 14:00 EST
-    - cron: '30 18 * * 1-5'   # 14:30 EST (last scan before time gate)
+    - cron: '30 18 * * 1-5'   # 14:30 EST
+    - cron: '0 19 * * 1-5'    # 15:00 EST
+    - cron: '30 19 * * 1-5'   # 15:30 EST — equity close
+    # Post-equity / crypto-only: 16:00–19:30 EST (20:00–23:30 UTC)
+    - cron: '0 20 * * 1-5'    # 16:00 EST
+    - cron: '30 20 * * 1-5'   # 16:30 EST
+    - cron: '0 21 * * 1-5'    # 17:00 EST
+    - cron: '30 21 * * 1-5'   # 17:30 EST  ← also triggers analyst job (kept)
+    - cron: '0 22 * * 1-5'    # 18:00 EST
+    - cron: '30 22 * * 1-5'   # 18:30 EST
+    - cron: '0 23 * * 1-5'    # 19:00 EST
+    - cron: '30 23 * * 1-5'   # 19:30 EST (last scan; 19:45 entry cutoff handled in code)
 
     # ── Weekly review — every Sunday at 08:00 EST ──────────────────────────
     - cron: '0 12 * * 0'      # Sunday 08:00 EST = 12:00 UTC
@@ -31,13 +49,13 @@ on:
     # ── Daily analyst run — 17:30 EST (21:30 UTC) weekdays ────────────────
     - cron: '30 21 * * 1-5'   # 17:30 EST = 21:30 UTC
 
-    # ── Memo staleness check — :15 past the hour, every weekday hour ─────
+    # ── Memo staleness check — :15 past the hour, within trading window ──
     # Cheap check (one yfinance call) that fires the Research Analyst out of
     # cycle if VIX has drifted ≥15% or crossed a regime band, or if today is
-    # an FOMC/CPI date. The job itself enforces a 6-hour cooldown so this
-    # cron can fire freely without spamming refreshes.
+    # an FOMC/CPI date. The job itself enforces a 6-hour cooldown.
     # Scheduled at :15 to avoid colliding with the :00/:30 trading scans.
-    - cron: '15 14-19 * * 1-5'  # 10:15–15:15 EST hourly
+    # 12:15–23:15 UTC = 08:15–19:15 EST (within the 08:00–20:00 window).
+    - cron: '15 12-23 * * 1-5'  # 08:15–19:15 EST hourly
 
 
   # ── Manual trigger (for testing) ─────────────────────────────────────────
