@@ -88,4 +88,9 @@ jobs:
           fi
 
           git commit -m "chore: trade-analysis report (run ${{ github.run_id }})"
+
+          # Pull remote changes first so concurrent journal pushes from the
+          # local bot don't cause a non-fast-forward rejection.
+          # --no-rebase (merge) is safe for append-only JSONL files.
+          git pull --no-rebase origin main || true
           git push origin main

@@ -66,6 +66,19 @@ _FALLBACK_PROFILES = {
 }
 
 
+def _emergency_stop_active() -> bool:
+    """Top-level risk.max_open_positions == 0 in config.yaml is a hard kill-switch
+    that overrides any active profile. Set to 0 to halt all new entries while
+    keeping the infrastructure running (data fetch, journal, dashboard)."""
+    try:
+        import yaml
+        cfg = yaml.safe_load(_CONFIG_FILE.read_text(encoding="utf-8"))
+        risk = cfg.get("risk") or {}
+        return int(risk.get("max_open_positions", -1)) == 0
+    except Exception:
+        return False
+
+
 def load_risk_profile() -> tuple[str, dict]:
     """
     Read the active risk profile name from risk_profile.json, then load
@@ -75,6 +88,18 @@ def load_risk_profile() -> tuple[str, dict]:
     """
     profile_name = _DEFAULT_PROFILE
     profile_file = _find_profile_file()
+    # Loud failure when neither location has the file. Silently defaulting to
+    # high_safety on every run was the M-3/M-1 audit finding (2026-05-22, 2026-05-23):
+    # operators editing risk_profile.json in the bot tree saw no effect because the
+    # bot fell back to a default.
+    if not _LOCAL_PROFILE_FILE.exists() and not _DASHBOARD_PROFILE_FILE.exists():
+        logger.error(
+            f"risk_profile.json NOT FOUND in either location:\n"
+            f"  - {_LOCAL_PROFILE_FILE}\n"
+            f"  - {_DASHBOARD_PROFILE_FILE}\n"
+            f"Falling back to {_DEFAULT_PROFILE}. Create the file in one of these "
+            f"locations to make the active profile explicit."
+        )
     try:
         data = json.loads(profile_file.read_text(encoding="utf-8"))
         profile_name = data.get("active_profile", _DEFAULT_PROFILE)
@@ -115,6 +140,13 @@ def _get_crypto_client():
 # on top of each profile's max_position_pct — a sanity ceiling that prevents
 # any future profile change from accidentally allowing oversized positions.
 HARD_MAX_POSITION_PCT = 0.10  # 10% of account, absolute ceiling
+
+# Float tolerance for the position-size boundary check. Crypto sizing caps the
+# notional at exactly `account_value * max_position_pct`, then divides by
+# entry_price to get a fractional quantity. Multiplying that quantity back by
+# entry_price inside validate_order can drift by ~1 ulp, pushing position_pct
+# fractionally above the cap and triggering a spurious rejection at exactly 10%.
+POSITION_PCT_EPS = 1e-6
 
 
 class OrderExecutor:
@@ -185,6 +217,15 @@ class OrderExecutor:
         p = self.profile
         is_exit = side.upper() == "SELL"
 
+        # Emergency stop: top-level risk.max_open_positions == 0 in config.yaml halts
+        # all new entries regardless of active profile. Exits are still allowed so an
+        # operator can flatten positions while the bot stays running for data/dashboard.
+        if not is_exit and _emergency_stop_active():
+            return False, (
+                "Emergency stop active (config.yaml risk.max_open_positions=0). "
+                "No new entries. Set to a positive value or delete the field to resume."
+            )
+
         # Daily loss limit applies to ALL orders — both new entries and exits
         daily_loss_pct = abs(day_pl) / account_value if day_pl < 0 else 0
         loss_limit = p["max_daily_loss_pct"]
@@ -225,7 +266,7 @@ class OrderExecutor:
         order_value  = quantity * entry_price
         position_pct = order_value / account_value
         max_pos_pct  = min(p["max_position_pct"], HARD_MAX_POSITION_PCT)
-        if position_pct > max_pos_pct:
+        if position_pct > max_pos_pct + POSITION_PCT_EPS:
             cap_reason = "hard cap" if HARD_MAX_POSITION_PCT < p["max_position_pct"] else "profile cap"
             return False, f"Position too large ({position_pct:.1%} of account, max {max_pos_pct:.0%} — {cap_reason})"
 
@@ -292,6 +333,23 @@ class OrderExecutor:
         quantity = min(quantity, int(max_order_value / entry_price))
         return max(1, quantity)
 
+    def _wait_for_terminal_status(self, order_id: str, max_wait_secs: int = 10):
+        """
+        Poll Alpaca until the order reaches a terminal state or timeout.
+        Market orders on paper fill in < 1 s; 10 s is a generous safety margin.
+        Returns the final order object (possibly still non-terminal on timeout).
+        """
+        import time
+        terminal = {"filled", "partially_filled", "cancelled", "expired", "replaced", "rejected"}
+        deadline = time.monotonic() + max_wait_secs
+        while time.monotonic() < deadline:
+            order = self.trading_client.get_order_by_id(order_id)
+            if str(order.status) in terminal:
+                return order
+            time.sleep(0.5)
+        logger.warning(f"Order {order_id} did not reach terminal state within {max_wait_secs}s — journalling as-is")
+        return self.trading_client.get_order_by_id(order_id)
+
     def place_order(self, decision: dict, account: dict) -> dict:
         """
         Main order placement function.
@@ -309,7 +367,7 @@ class OrderExecutor:
 
         symbol = decision.get("symbol")
         if not symbol:
-            return {"status": "ERROR", "reason": "No symbol in decision"}
+            return {"status": "CANCELLED", "reason": "No symbol in decision"}
 
         entry_price = float(decision.get("entry_price", 0))
         stop_loss   = float(decision.get("stop_loss", 0))
@@ -326,7 +384,7 @@ class OrderExecutor:
             crypto_bal = crypto_client.get_balance()
             if "error" in crypto_bal:
                 exchange_name = type(crypto_client).__name__
-                return {"status": "ERROR", "reason": f"{exchange_name} balance fetch failed: {crypto_bal['error']}", "symbol": symbol}
+                return {"status": "CANCELLED", "reason": f"{exchange_name} balance fetch failed: {crypto_bal['error']}", "symbol": symbol}
             account_value     = float(crypto_bal.get("account_value", 0))
             buying_power      = float(crypto_bal.get("free_usdt",     0))
             current_positions = int(crypto_bal.get("open_positions",  0))
@@ -348,7 +406,7 @@ class OrderExecutor:
             quantity    = float(decision.get("quantity", 0))
             usdt_budget = quantity * entry_price
             if quantity <= 0:
-                return {"status": "ERROR", "reason": "Exit quantity must be > 0", "symbol": symbol}
+                return {"status": "CANCELLED", "reason": "Exit quantity must be > 0", "symbol": symbol}
         elif is_crypto:
             max_usdt = min(account_value * effective_max_pct, buying_power * 0.9)
             if p.get("always_max_position"):
@@ -359,7 +417,12 @@ class OrderExecutor:
                 usdt_budget   = (risk_usdt / stop_distance) * entry_price if stop_distance > 0 else 0
                 usdt_budget   = min(usdt_budget, max_usdt)
             if usdt_budget < p["min_order_value"]:
-                return {"status": "SKIPPED", "reason": f"USDT budget too small (${usdt_budget:.2f}, min ${p['min_order_value']})", "symbol": symbol}
+                return {
+                    "status": "SKIPPED",
+                    "reason": f"USDT budget too small (${usdt_budget:.2f}, min ${p['min_order_value']})",
+                    "symbol": symbol,
+                    "venue_account": crypto_bal,
+                }
             quantity = usdt_budget / entry_price
             logger.info(
                 f"Crypto sizing — {symbol}: order ${usdt_budget:,.2f} "
@@ -376,29 +439,116 @@ class OrderExecutor:
                 f"({quantity*entry_price/account_value:.2%} of account, profile cap {p['max_position_pct']:.0%}, hard cap {HARD_MAX_POSITION_PCT:.0%})"
             )
 
-        # Existing-quantity lookup for the no-adds rule. Equities only — the
-        # Bybit balance dict doesn't expose per-symbol holdings the same way,
-        # and Bybit doesn't have Alpaca's bracket-OCO cancel issue.
-        # Also checks open Alpaca orders to catch the race condition where a
-        # bracket BUY was submitted but hasn't appeared in positions yet.
+        # Existing-quantity lookup for the no-adds rule.
+        # For equities: three-layer check via account snapshot, live Alpaca
+        # positions, and open Alpaca orders (see comments below).
+        # For crypto: the exchange balance dict is the ground truth for coins
+        # that have already settled, but SUBMITTED orders take 1–30 s to appear
+        # as a balance — so we also check the journal for any BUY whose
+        # execution_status is SUBMITTED or FILLED with no subsequent SELL in
+        # the last 3 days.  This is the root cause of the LTC/USDT 15-order
+        # loop on 2026-05-25 (C-3 pattern, audit 2026-05-25).
         existing_qty = 0.0
+
+        if is_crypto and action == "BUY":
+            # Crypto Layer 1: coins already visible in the exchange balance
+            base_coin = symbol.split("/")[0]  # "LTC/USDT" → "LTC"
+            for pos in (crypto_bal.get("positions") or []):
+                if pos.get("currency") == base_coin and (pos.get("value_usd") or 0) >= 10:
+                    existing_qty = float(pos.get("amount", 0))
+                    logger.info(
+                        f"No-adds (crypto): balance shows {existing_qty:.6f} {base_coin} "
+                        f"(${pos.get('value_usd', 0):.2f}) — treating as existing position"
+                    )
+                    break
+
+            # Crypto Layer 2: recent SUBMITTED/FILLED journal entries (catches
+            # orders that haven't settled into the balance yet).
+            if existing_qty == 0:
+                journal_path = _BOT_ROOT / "journal" / "trades.jsonl"
+                dash_journal  = _BOT_ROOT.parent.parent / "flowtrader-dashboard" / "journal" / "trades.jsonl"
+                for jpath in (journal_path, dash_journal):
+                    if not jpath.exists():
+                        continue
+                    try:
+                        from datetime import datetime, timedelta
+                        import pytz
+                        cutoff = datetime.now(pytz.utc) - timedelta(days=3)
+                        lines = jpath.read_text(encoding="utf-8-sig").splitlines()
+                        # Walk newest-first: most recent entry per symbol
+                        open_syms: set = set()
+                        for raw in reversed(lines):
+                            raw = raw.strip()
+                            if not raw:
+                                continue
+                            try:
+                                entry = json.loads(raw)
+                            except json.JSONDecodeError:
+                                continue
+                            sym_j = entry.get("symbol") or ""
+                            if sym_j != symbol:
+                                continue
+                            ts_str = entry.get("timestamp", "")
+                            try:
+                                ts = datetime.fromisoformat(ts_str)
+                                if ts.tzinfo is None:
+                                    import pytz as _pytz
+                                    ts = _pytz.utc.localize(ts)
+                                if ts < cutoff:
+                                    break  # entries are newest-first, stop
+                            except Exception:
+                                continue
+                            act = entry.get("action", "")
+                            status = entry.get("execution_status", "")
+                            if act == "SELL":
+                                break  # position was closed; no open position
+                            if act == "BUY" and status in ("SUBMITTED", "FILLED", "SIMULATED"):
+                                existing_qty = float(entry.get("quantity") or 1)
+                                logger.info(
+                                    f"No-adds (crypto): journal shows recent BUY {symbol} "
+                                    f"({status} @ {ts_str[:19]}) — treating as existing position"
+                                )
+                                break
+                        if existing_qty > 0:
+                            break
+                    except Exception as e:
+                        logger.warning(f"Crypto journal no-adds check failed: {e}")
+
         if not is_crypto:
+            # Layer 1: positions already reported in the account snapshot
             for pos in (account.get("positions") or []):
                 if pos.get("symbol") == symbol:
                     existing_qty = float(pos.get("qty", 0))
                     break
-            if existing_qty == 0 and action == "BUY" and self.alpaca_available:
-                try:
-                    from alpaca.trading.requests import GetOrdersRequest
-                    from alpaca.trading.enums import QueryOrderStatus
-                    open_orders = self.trading_client.get_orders(
-                        filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol])
-                    )
-                    if open_orders:
-                        existing_qty = sum(float(o.qty or 0) for o in open_orders)
-                        logger.info(f"No-adds: found {len(open_orders)} open order(s) for {symbol} totalling {existing_qty} shares — treating as existing position")
-                except Exception as e:
-                    logger.warning(f"Could not check open orders for {symbol}: {e}")
+
+            if action == "BUY" and self.alpaca_available:
+                # Layer 2: live positions from Alpaca (catches fills the account
+                # snapshot may have missed between poll cycles — root cause of
+                # the 3 duplicate META SUBMITs on 2026-05-06/07, C-4 in audit).
+                if existing_qty == 0:
+                    try:
+                        live_pos = self.trading_client.get_open_position(symbol)
+                        if live_pos:
+                            existing_qty = float(live_pos.qty or 0)
+                            if existing_qty > 0:
+                                logger.info(f"No-adds: live position check found {existing_qty} shares of {symbol}")
+                    except Exception:
+                        pass  # 404 = no position, which is fine
+
+                # Layer 3: open orders (catches bracket BUYs that submitted but
+                # haven't appeared in positions yet — the original check).
+                if existing_qty == 0:
+                    try:
+                        from alpaca.trading.requests import GetOrdersRequest
+                        from alpaca.trading.enums import QueryOrderStatus
+                        open_orders = self.trading_client.get_orders(
+                            filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol])
+                        )
+                        if open_orders:
+                            existing_qty = sum(float(o.qty or 0) for o in open_orders)
+                            logger.info(f"No-adds: found {len(open_orders)} open order(s) for {symbol} totalling {existing_qty} shares — treating as existing position")
+                    except Exception as e:
+                        logger.warning(f"Could not check open orders for {symbol}: {e}")
 
         # ── Validate ──────────────────────────────────────────────────────────
         is_valid, reason = self.validate_order(
@@ -416,12 +566,15 @@ class OrderExecutor:
 
         if not is_valid:
             logger.warning(f"Order rejected: {reason}")
-            return {
-                "status": "REJECTED",
+            rejection = {
+                "status": "CANCELLED",
                 "reason": reason,
                 "symbol": symbol,
                 "attempted_quantity": quantity,
             }
+            if is_crypto:
+                rejection["venue_account"] = crypto_bal
+            return rejection
 
         # ── Place crypto order (Binance if configured, else Bybit) ───────────
         if is_crypto:
@@ -435,13 +588,14 @@ class OrderExecutor:
             )
             exchange_label = crypto_bal.get("exchange", "crypto")
             logger.info(f"{exchange_label.capitalize()} order: {action} {symbol} — {result.get('status')}")
+            result["venue_account"] = crypto_bal
             return result
 
         # ── Route equities to Alpaca ──────────────────────────────────────────
         if not self.alpaca_available:
             logger.warning("Alpaca not available. Simulating order.")
             return {
-                "status": "SIMULATED",
+                "status": "FILLED",
                 "symbol": symbol,
                 "side": action,
                 "quantity": quantity,
@@ -478,23 +632,44 @@ class OrderExecutor:
             order = self.trading_client.submit_order(order_data=order_request)
             logger.info(f"Alpaca order: {action} {quantity} {symbol} @ ~{entry_price}")
 
+            # Poll for terminal status — market orders on paper typically fill
+            # within 1-2 seconds, but submit_order returns immediately with
+            # status "new" or "accepted".  Returning SUBMITTED here caused the
+            # journal to never record a FILLED row (C-4 in audit 2026-05-20).
+            order = self._wait_for_terminal_status(str(order.id))
+
+            final_status = str(order.status)
+            filled_qty = float(order.filled_qty or 0)
+            filled_avg = float(order.filled_avg_price or 0) if order.filled_avg_price else entry_price
+
+            # Map Alpaca status strings to spec-compliant enum {FILLED, SKIPPED, PARTIAL, CANCELLED}
+            status_map = {
+                "filled": "FILLED",
+                "partially_filled": "PARTIAL",
+                "rejected": "CANCELLED",
+                "cancelled": "CANCELLED",
+                "expired": "CANCELLED",
+                "replaced": "CANCELLED",
+            }
+            mapped_status = status_map.get(final_status.lower(), "CANCELLED")
+
             return {
-                "status": "FILLED" if str(order.status) in ["filled", "partially_filled"] else "SUBMITTED",
+                "status": mapped_status,
                 "order_id": str(order.id),
                 "symbol": symbol,
                 "side": action,
-                "quantity": quantity,
-                "entry_price": entry_price,
+                "quantity": filled_qty if filled_qty > 0 else quantity,
+                "entry_price": filled_avg,
                 "stop_loss": stop_loss,
                 "take_profit": take_profit,
-                "order_status": str(order.status),
+                "order_status": final_status,
                 "paper_trade": self.paper
             }
 
         except Exception as e:
             logger.error(f"Order submission failed: {e}")
             return {
-                "status": "ERROR",
+                "status": "CANCELLED",
                 "reason": str(e),
                 "symbol": symbol,
                 "side": action,

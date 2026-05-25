@@ -327,6 +327,39 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
     execution_result = executor.place_order(decision, account)
     logger.info(f"Execution result: {execution_result.get('status')} — {execution_result.get('reason', 'OK')}")
 
+    # Step 4b: Enrich SKIP reason with best-candidate info so the journal is
+    # auditable.  "Action is SKIP — no order placed" with no signal context is
+    # M-1 from the 2026-05-25 audit — 24 consecutive SKIPs all identical.
+    if execution_result.get("status") == "SKIPPED":
+        wl = market_snapshot.get("watchlist") or []
+        if wl:
+            best = max(
+                wl,
+                key=lambda s: (
+                    s.get("indicators", {}).get("signal_score", 0)
+                    + s.get("indicators", {}).get("momentum_score", 0)
+                )
+            )
+            best_sym   = best.get("symbol", "?")
+            best_ind   = best.get("indicators", {})
+            best_mr    = best_ind.get("signal_score", 0)
+            best_mom   = best_ind.get("momentum_score", 0)
+            best_mode  = best_ind.get("strategy_mode", "NONE")
+            best_rsi   = best_ind.get("rsi", "?")
+            best_adx   = best_ind.get("adx", "?")
+            best_regime = best_ind.get("regime", "?")
+            min_score  = executor.profile.get("min_signal_score", 2)
+            active_score = best_mr if best_mode != "MOMENTUM" else best_mom
+            skip_detail = (
+                f"Best candidate: {best_sym} "
+                f"mode={best_mode} score={active_score} (needs {min_score}+) "
+                f"MR={best_mr} Mom={best_mom} "
+                f"RSI={best_rsi} ADX={best_adx} regime={best_regime}"
+            )
+            existing_reason = execution_result.get("reason", "")
+            execution_result["reason"] = f"{existing_reason} | {skip_detail}"
+            logger.info(f"SKIP detail: {skip_detail}")
+
     # Step 5: Journal
     journal_entry = journal.log_decision(
         decision=decision,
@@ -367,7 +400,16 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
         "day_pl": day_pl
     }
 
-    logger.info(f"Session complete: {json.dumps(result)}")
+    # Log a compact one-liner; the full structured record is in trades.jsonl.
+    # The bare JSON print that used to follow this was captured by run_bot.bat
+    # into run_bot.log, breaking log parsers (L-2 in audit 2026-05-25).
+    logger.info(
+        f"Session complete: action={result.get('action')} "
+        f"symbol={result.get('symbol') or '—'} "
+        f"exec={result.get('execution')} "
+        f"score={result.get('signal_score', 0)} "
+        f"acct=${result.get('account_value', 0):,.0f}"
+    )
     return result
 
 
@@ -717,5 +759,6 @@ if __name__ == "__main__":
     else:
         # Equity market hours are checked inside run_trading_session — crypto
         # runs 24/7 so we no longer exit on closed-market.
-        result = run_trading_session(config, mode)
-        print(json.dumps(result, indent=2))
+        # Do NOT print(json.dumps(result)) here — run_bot.bat captures stdout
+        # into run_bot.log and bare JSON blocks break log parsers (L-2 audit).
+        run_trading_session(config, mode)

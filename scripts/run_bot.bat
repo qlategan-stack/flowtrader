@@ -7,8 +7,13 @@ set MODE=%1
 if "%MODE%"=="" set MODE=full
 
 REM Pull latest risk profile from dashboard repo before each run
-git -C "C:\Users\quint\OneDrive\1.Projects\Flowtrader\flowtrader-dashboard" pull --ff-only >> "scripts\run_bot.log" 2>&1
+git -C "%USERPROFILE%\OneDrive\1.Projects\Flowtrader\flowtrader-dashboard" pull --ff-only >> "scripts\run_bot.log" 2>&1
 
-"C:\Python313\python.exe" main.py %MODE% >> "scripts\run_bot.log" 2>&1
-"C:\Python313\python.exe" scripts\push_journal.py >> "scripts\run_bot.log" 2>&1
-"C:\Python313\python.exe" "C:\Users\quint\OneDrive\1.Projects\Flowtrader\flowtrader-dashboard\scripts\build_positions_dashboard.py" >> "scripts\run_bot.log" 2>&1
+REM Keep bot-local risk_profile.json in sync with dashboard (H-3 audit fix 2026-05-25)
+REM Path 1 (journal\risk_profile.json) is now always present so the executor
+REM never falls back to high_safety defaults if the dashboard repo is unavailable.
+copy /Y "%USERPROFILE%\OneDrive\1.Projects\Flowtrader\flowtrader-dashboard\journal\risk_profile.json" "journal\risk_profile.json" >> "scripts\run_bot.log" 2>&1
+
+python main.py %MODE% >> "scripts\run_bot.log" 2>&1
+python scripts\push_journal.py >> "scripts\run_bot.log" 2>&1
+python "%USERPROFILE%\OneDrive\1.Projects\Flowtrader\flowtrader-dashboard\scripts\build_positions_dashboard.py" >> "scripts\run_bot.log" 2>&1

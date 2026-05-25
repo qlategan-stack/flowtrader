@@ -71,6 +71,12 @@ class BybitFetcher:
                 "options": {
                     "defaultType": "spot",
                     "adjustForTimeDifference": True,
+                    # 15s window — Windows clocks can drift up to ~10s
+                    # between time-sync runs. Bybit default is 5000ms and
+                    # we have hit "invalid request, please check your
+                    # server timestamp" errors at ~7s drift. See audit
+                    # 2026-05-20 M-3.
+                    "recvWindow": 15000,
                 },
                 "enableRateLimit": True,
             })
@@ -91,6 +97,9 @@ class BybitFetcher:
                 "options": {
                     "defaultType": "spot",
                     "adjustForTimeDifference": True,
+                    # See note above on the public client — wider window
+                    # prevents Bybit "10002" errors from clock drift.
+                    "recvWindow": 15000,
                 },
                 "enableRateLimit": True,
             })
@@ -683,11 +692,11 @@ class BinanceFetcher:
             })
             if self.testnet:
                 self.exchange.set_sandbox_mode(True)
-                # testnet.binance.vision uses a CA not in Python's certifi bundle;
-                # ccxt passes verify=exchange.verify to requests — session.verify has no effect.
-                self.exchange.verify = False
-                import urllib3
-                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                # testnet.binance.vision is intercepted by Norton TLS inspection
+                # (same as all other HTTPS on this host — see main.py SSL patch).
+                # The global Session.__init__ monkey-patch in main.py handles this;
+                # verify=False is not needed and conflicts with check_hostname=True
+                # in Python 3.13.
             # load_markets() is deferred to _ensure_markets() — it takes ~2 min on testnet
             # and is only needed for precision methods used in order placement.
             self._markets_loaded = False
@@ -721,11 +730,21 @@ class BinanceFetcher:
             usdt_free  = float((raw.get("USDT") or {}).get("free",  0) or 0)
             usdt_total = float((raw.get("USDT") or {}).get("total", 0) or 0)
 
-            # Collect non-USDT coins with a non-trivial amount (filter out dust
-            # and testnet fake tokens that have non-ASCII names).
+            # Fiat / stable coins that Binance doesn't pair against USDT (so
+            # fetch_tickers raises "no market symbol X/USDT"). TRY and ZAR in
+            # particular are residual fiat balances on the testnet account that
+            # trigger a warning on every cycle until skipped here.
+            # ZAR added 2026-05-25: audit M-2 — 40+ warnings per log window.
+            _FIAT_SKIP = {"TRY", "ZAR", "EUR", "GBP", "AUD", "BRL", "RUB",
+                          "USD", "BUSD", "USDC", "TUSD", "FDUSD", "DAI",
+                          "NGN", "MXN", "IDR", "PLN", "RON", "SEK", "DKK",
+                          "NOK", "CZK", "HUF", "THB", "UAH", "VND", "TWD"}
+
+            # Collect non-USDT coins with a non-trivial amount (filter out dust,
+            # testnet fake tokens with non-ASCII names, and fiat without a /USDT pair).
             coin_amounts: dict[str, float] = {}
             for coin, data in (raw.get("total") or {}).items():
-                if coin == "USDT":
+                if coin == "USDT" or coin in _FIAT_SKIP:
                     continue
                 amount = float(data or 0)
                 if amount > 1e-4 and coin.isascii() and coin.isalnum() and not coin.isdigit():
@@ -755,12 +774,17 @@ class BinanceFetcher:
                 })
 
             position_value = sum((p["value_usd"] or 0) for p in positions)
+            # Only count positions with a known USD value above the minimum
+            # notional threshold as "open" — unpriced dust and testnet junk
+            # coins (no USDT pair, value_usd=None) must not count toward the
+            # max-positions limit or they permanently block new entries.
+            tradeable_positions = [p for p in positions if (p["value_usd"] or 0) >= 10]
             return {
                 "account_value":  round(usdt_total + position_value, 2),
                 "total_usdt":     round(usdt_total, 2),
                 "free_usdt":      round(usdt_free, 2),
                 "position_value": round(position_value, 2),
-                "open_positions": len(positions),
+                "open_positions": len(tradeable_positions),
                 "positions":      positions,
                 "exchange":       "binance",
                 "testnet":        self.testnet,
