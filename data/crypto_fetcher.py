@@ -40,6 +40,26 @@ BYBIT_REST_BASE   = "https://api.bybit.com"
 BINANCE_REST_BASE = "https://api.binance.com"
 
 
+def _binance_spot_price(symbol: str) -> float:
+    """
+    Fetch a single spot price from Binance public REST — no auth required.
+    symbol: slash-format e.g. 'LTC/USDT'. Returns 0.0 on any failure.
+    Used as a per-coin fallback when the batch fetch_tickers call fails.
+    """
+    try:
+        r = requests.get(
+            f"{BINANCE_REST_BASE}/api/v3/ticker/price",
+            params={"symbol": symbol.replace("/", "")},
+            timeout=5,
+        )
+        data = r.json()
+        if isinstance(data, dict) and "price" in data:
+            return float(data["price"])
+    except Exception:
+        pass
+    return 0.0
+
+
 class BybitFetcher:
     """
     Fetches crypto market data from Bybit and calculates the same technical
@@ -730,27 +750,39 @@ class BinanceFetcher:
             usdt_free  = float((raw.get("USDT") or {}).get("free",  0) or 0)
             usdt_total = float((raw.get("USDT") or {}).get("total", 0) or 0)
 
-            # Fiat / stable coins that Binance doesn't pair against USDT (so
-            # fetch_tickers raises "no market symbol X/USDT"). TRY and ZAR in
-            # particular are residual fiat balances on the testnet account that
-            # trigger a warning on every cycle until skipped here.
-            # ZAR added 2026-05-25: audit M-2 — 40+ warnings per log window.
-            _FIAT_SKIP = {"TRY", "ZAR", "EUR", "GBP", "AUD", "BRL", "RUB",
-                          "USD", "BUSD", "USDC", "TUSD", "FDUSD", "DAI",
-                          "NGN", "MXN", "IDR", "PLN", "RON", "SEK", "DKK",
-                          "NOK", "CZK", "HUF", "THB", "UAH", "VND", "TWD"}
+            # Fiat / stable / testnet-junk tokens that have no USDT spot pair on
+            # Binance. Requesting them in fetch_tickers raises an exception that
+            # wipes prices for ALL coins in the batch — so every real position
+            # (LTC, NEAR, ETH) ends up with value_usd=None and open_positions=0,
+            # which breaks the max-positions gate.
+            # ARS added 2026-05-25 (same root cause as ZAR — testnet overflow junk).
+            _FIAT_SKIP = {"TRY", "ZAR", "ARS", "JPY", "COP", "EUR", "GBP",
+                          "AUD", "BRL", "RUB", "USD", "BUSD", "USDC", "TUSD",
+                          "FDUSD", "DAI", "NGN", "MXN", "IDR", "PLN", "RON",
+                          "SEK", "DKK", "NOK", "CZK", "HUF", "THB", "UAH",
+                          "VND", "TWD", "AEUR", "BIDR", "BVN", "RUB"}
+
+            # Known testnet-only junk tokens (MAX_INT balances from Binance
+            # testnet faucet overflow — no real USDT pair exists for these).
+            _TESTNET_JUNK = {"HOT", "WIN", "VTHO", "SHIB", "XEC", "SPELL",
+                             "BTTC", "LUNC", "PEPE", "FLOKI", "MEME", "BONK",
+                             "1000SATS", "NOT"}
 
             # Collect non-USDT coins with a non-trivial amount (filter out dust,
-            # testnet fake tokens with non-ASCII names, and fiat without a /USDT pair).
+            # testnet fake tokens with non-ASCII names, fiat without a /USDT pair,
+            # and known testnet junk coins with MAX_INT balances).
             coin_amounts: dict[str, float] = {}
             for coin, data in (raw.get("total") or {}).items():
-                if coin == "USDT" or coin in _FIAT_SKIP:
+                if coin == "USDT" or coin in _FIAT_SKIP or coin in _TESTNET_JUNK:
                     continue
                 amount = float(data or 0)
                 if amount > 1e-4 and coin.isascii() and coin.isalnum() and not coin.isdigit():
                     coin_amounts[coin] = amount
 
             # Batch-fetch tickers for up to 20 coins in a single API call.
+            # If the batch fails (one bad symbol poisons the whole call), fall
+            # back to individual Binance REST lookups for each coin so real
+            # positions (LTC, NEAR, ETH) still get priced correctly.
             prices: dict[str, float] = {}
             if coin_amounts:
                 symbols = [f"{c}/USDT" for c in list(coin_amounts)[:20]]
@@ -760,7 +792,12 @@ class BinanceFetcher:
                         coin = sym.split("/")[0]
                         prices[coin] = float(ticker.get("last", 0) or 0)
                 except Exception as te:
-                    logger.warning(f"Binance batch ticker fetch failed: {te}")
+                    logger.warning(f"Binance batch ticker fetch failed: {te} — falling back to individual lookups")
+                    # Individual fallback: one REST call per coin (no auth needed)
+                    for coin in list(coin_amounts)[:20]:
+                        p = _binance_spot_price(f"{coin}/USDT")
+                        if p:
+                            prices[coin] = p
 
             positions = []
             for coin, amount in list(coin_amounts.items())[:20]:
