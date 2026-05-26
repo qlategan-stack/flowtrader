@@ -125,6 +125,58 @@ _ALREADY_HELD_COOLDOWN_CYCLES = int(os.getenv("ALREADY_HELD_COOLDOWN_CYCLES", "3
 _MAX_BUYS_PER_SYMBOL_PER_DAY = int(os.getenv("MAX_BUYS_PER_SYMBOL_PER_DAY", "2"))
 _TRADES_JOURNAL_FILE = Path("journal/trades.jsonl")
 
+# L-4 (audit 2026-05-26): structured SKIP categories so the journal supports
+# machine analysis instead of forcing pattern-matching on free-text reasoning.
+# Order matters — _classify_skip checks the most specific kinds first.
+SKIP_KIND_OFF_WINDOW       = "OFF_WINDOW"        # outside the trading window gate
+SKIP_KIND_MEMO_PAUSED      = "MEMO_PAUSED"       # weekly memo paused this asset class
+SKIP_KIND_RR_BELOW_MIN     = "RR_BELOW_MIN"      # R:R gate (CLAUDE.md rule 9)
+SKIP_KIND_DIRECTIONAL_GATE = "DIRECTIONAL_GATE"  # overbought extension
+SKIP_KIND_TRENDING_REGIME  = "TRENDING_REGIME"   # ADX > threshold + MR strategy
+SKIP_KIND_LOW_SCORE        = "LOW_SCORE"         # best candidate < min_signal_score
+SKIP_KIND_NO_CANDIDATE     = "NO_CANDIDATE"      # empty watchlist or all filtered
+SKIP_KIND_API_ERROR        = "API_ERROR"         # Claude/Alpaca/Bybit failure
+SKIP_KIND_OTHER            = "OTHER"             # uncategorised — review reasoning
+
+
+def _classify_skip(decision: dict, best_candidate: dict | None, min_score: int) -> str:
+    """
+    Map a SKIP decision to one of the SKIP_KIND_* constants for journal
+    aggregation. Inspects Claude's reasoning text, the rejection_reason,
+    and the best-scoring candidate's indicators.
+    """
+    if decision.get("api_error"):
+        return SKIP_KIND_API_ERROR
+    if not best_candidate:
+        return SKIP_KIND_NO_CANDIDATE
+
+    reasoning = (decision.get("reasoning") or "").lower()
+    rejection = (decision.get("rejection_reason") or "").lower()
+    blob = f"{reasoning}\n{rejection}"
+
+    ind = best_candidate.get("indicators", {}) or {}
+    mr_score  = ind.get("signal_score", 0)
+    mom_score = ind.get("momentum_score", 0)
+    active    = max(mr_score, mom_score)
+    regime    = (ind.get("regime") or "").upper()
+
+    # Off-window / window gate
+    if "off-window" in blob or ("outside" in blob and "window" in blob):
+        return SKIP_KIND_OFF_WINDOW
+    # R:R hard gate — distinctive phrase the rule injects
+    if "r:r below 1.5" in blob or "minimum r:r" in blob or "r:r of " in blob and "1.5" in blob:
+        return SKIP_KIND_RR_BELOW_MIN
+    # Memo-side strategy pause
+    if "strategy gate" in blob or ("mean reversion" in blob and "paused" in blob):
+        return SKIP_KIND_MEMO_PAUSED
+    # Directional gate — the explicit upstream tag
+    if "directional_gate_failed" in blob or "overbought extension" in blob or ind.get("overbought_extension"):
+        return SKIP_KIND_DIRECTIONAL_GATE
+    # Score below threshold — split out trending sub-case
+    if active < min_score:
+        return SKIP_KIND_TRENDING_REGIME if regime == "TRENDING" else SKIP_KIND_LOW_SCORE
+    return SKIP_KIND_OTHER
+
 
 def _load_cooldown() -> dict:
     """Return {symbol: cycles_remaining} from the cooldown store."""
@@ -626,6 +678,8 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
     # M-1 from the 2026-05-25 audit — 24 consecutive SKIPs all identical.
     if execution_result.get("status") == "SKIPPED":
         wl = market_snapshot.get("watchlist") or []
+        best = None
+        min_score = executor.profile.get("min_signal_score", 2)
         if wl:
             best = max(
                 wl,
@@ -642,7 +696,6 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
             best_rsi   = best_ind.get("rsi", "?")
             best_adx   = best_ind.get("adx", "?")
             best_regime = best_ind.get("regime", "?")
-            min_score  = executor.profile.get("min_signal_score", 2)
             active_score = best_mr if best_mode != "MOMENTUM" else best_mom
             skip_detail = (
                 f"Best candidate: {best_sym} "
@@ -653,6 +706,9 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
             existing_reason = execution_result.get("reason", "")
             execution_result["reason"] = f"{existing_reason} | {skip_detail}"
             logger.info(f"SKIP detail: {skip_detail}")
+        # L-4 (audit 2026-05-26): machine-readable skip category alongside
+        # the free-text reason so the journal supports aggregation.
+        execution_result["skip_kind"] = _classify_skip(decision, best, min_score)
 
     # Step 5: Journal — log the snapshot Claude actually saw, so top_setup_symbol
     # reflects the post-filter watchlist (without held/cooldowned symbols).

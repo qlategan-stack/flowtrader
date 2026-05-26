@@ -100,6 +100,9 @@ class TradeJournal:
             "order_id": execution_result.get("order_id"),
             "paper_trade": execution_result.get("paper_trade", True),
             "rejection_reason": execution_result.get("reason"),
+            # L-4 (audit 2026-05-26): structured machine-readable SKIP category
+            # set by main._classify_skip. None on non-SKIP rows.
+            "skip_kind": execution_result.get("skip_kind"),
 
             # Account state at time of decision
             "account_value": account.get("portfolio_value"),
