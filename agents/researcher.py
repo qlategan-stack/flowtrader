@@ -14,6 +14,7 @@ ADD or REMOVE from the watchlist each week.
 """
 
 import os
+import ssl as _ssl
 import json
 import logging
 from datetime import datetime, timedelta
@@ -26,6 +27,47 @@ from anthropic import Anthropic
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+# ── SSL fix for Norton Antivirus / missing-CA environments (M-4, audit 2026-05-25) ──
+# Alpha Vantage calls from this module failed with CERTIFICATE_VERIFY_FAILED when the
+# process was started outside main.py (which has its own global patch).  We apply the
+# same relaxation here so researcher.py works standalone and from any entrypoint.
+# Only the VERIFY_X509_STRICT flag is cleared — full certificate chain validation
+# (expiry, hostname, revocation) remains active.
+try:
+    from requests.adapters import HTTPAdapter as _HTTPAdapter
+    from urllib3.util.ssl_ import create_urllib3_context as _create_ctx
+
+    class _NortonCompatAdapter(_HTTPAdapter):
+        def init_poolmanager(self, *args, **kwargs):
+            ctx = _create_ctx()
+            ctx.load_default_certs()
+            ctx.verify_flags &= ~_ssl.VERIFY_X509_STRICT
+            kwargs["ssl_context"] = ctx
+            super().init_poolmanager(*args, **kwargs)
+
+        def proxy_manager_for(self, proxy, **proxy_kwargs):
+            ctx = _create_ctx()
+            ctx.load_default_certs()
+            ctx.verify_flags &= ~_ssl.VERIFY_X509_STRICT
+            proxy_kwargs["ssl_context"] = ctx
+            return super().proxy_manager_for(proxy, **proxy_kwargs)
+
+    _orig_session_init = requests.Session.__init__
+
+    def _patched_session_init(self, *args, **kwargs):
+        _orig_session_init(self, *args, **kwargs)
+        self.mount("https://", _NortonCompatAdapter())
+        self.mount("http://",  _NortonCompatAdapter())
+
+    # Only patch if main.py hasn't already done it (idempotent guard).
+    if not getattr(requests.Session, "_norton_patched", False):
+        requests.Session.__init__ = _patched_session_init
+        requests.Session._norton_patched = True  # type: ignore[attr-defined]
+        logger.debug("researcher: Norton-compatible SSL adapter installed")
+except Exception as _ssl_patch_err:
+    logger.warning(f"researcher: SSL patch failed (Alpha Vantage may fail): {_ssl_patch_err}")
+# ── End SSL fix ───────────────────────────────────────────────────────────────
 
 MEMO_DIR = Path("journal")
 MEMO_FILE = MEMO_DIR / "weekly_research_memo.md"
@@ -908,7 +950,9 @@ top_crypto_opportunities, crypto_risk_warnings
             )
             logger.info("Telegram research memo sent.")
         except Exception as e:
-            logger.warning(f"Telegram notification failed: {e}")
+            # urllib3 puts the full bot<token> URL in its exception text.
+            scrubbed = str(e).replace(self.telegram_token, "<TELEGRAM_TOKEN>") if self.telegram_token else str(e)
+            logger.warning(f"Telegram notification failed: {scrubbed}")
 
     # ── MAIN ENTRY POINT ─────────────────────────────────────────────────────
 

@@ -109,6 +109,61 @@ logging.basicConfig(
 logging.getLogger().addFilter(_SecretRedactingFilter())
 logger = logging.getLogger("FlowTrader")
 
+# ── "Already hold" cooldown store ─────────────────────────────────────────────
+# H-2 fix (audit 2026-05-25): when the executor rejects a BUY with
+# "Already hold …" the signal kept re-firing every 30 minutes because nothing
+# suppressed the symbol between cycles.  This file-based store records which
+# symbols are on cooldown (timestamped) so they can be filtered from the market
+# snapshot before Claude sees them.  The cooldown is N cycles (each cycle is
+# ~30 min), configurable via ALREADY_HELD_COOLDOWN_CYCLES env var (default 3).
+_ALREADY_HELD_COOLDOWN_FILE = Path("journal/already_held_cooldown.json")
+_ALREADY_HELD_COOLDOWN_CYCLES = int(os.getenv("ALREADY_HELD_COOLDOWN_CYCLES", "3"))
+
+
+def _load_cooldown() -> dict:
+    """Return {symbol: cycles_remaining} from the cooldown store."""
+    if not _ALREADY_HELD_COOLDOWN_FILE.exists():
+        return {}
+    try:
+        return json.loads(_ALREADY_HELD_COOLDOWN_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_cooldown(state: dict) -> None:
+    """Persist the cooldown store (removes symbols whose count hit 0)."""
+    active = {sym: n for sym, n in state.items() if n > 0}
+    _ALREADY_HELD_COOLDOWN_FILE.write_text(json.dumps(active, indent=2), encoding="utf-8")
+
+
+def _tick_cooldown(state: dict) -> dict:
+    """Decrement every symbol's remaining cycle count by 1."""
+    return {sym: max(0, n - 1) for sym, n in state.items()}
+
+
+def _add_cooldown(state: dict, symbol: str) -> dict:
+    """Put a symbol on cooldown for _ALREADY_HELD_COOLDOWN_CYCLES cycles."""
+    state[symbol] = _ALREADY_HELD_COOLDOWN_CYCLES
+    return state
+
+
+def _apply_cooldown_filter(market_snapshot: dict, state: dict) -> dict:
+    """
+    Remove symbols on cooldown from the watchlist inside market_snapshot so
+    Claude never sees them (and cannot propose a BUY that will be immediately
+    rejected again).  Returns a shallow copy with the filtered watchlist.
+    """
+    on_cooldown = {sym for sym, n in state.items() if n > 0}
+    if not on_cooldown:
+        return market_snapshot
+    original = market_snapshot.get("watchlist") or []
+    filtered = [s for s in original if s.get("symbol") not in on_cooldown]
+    if len(filtered) < len(original):
+        skipped = [s.get("symbol") for s in original if s.get("symbol") in on_cooldown]
+        logger.info(f"Already-held cooldown: suppressing {skipped} from this cycle")
+    return {**market_snapshot, "watchlist": filtered}
+# ── End cooldown store ─────────────────────────────────────────────────────────
+
 # ── Import modules ─────────────────────────────────────────────────────────────
 from data.fetcher import MarketDataFetcher
 from agents.decision import TradingDecisionAgent
@@ -324,6 +379,12 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
             "message": "Trading stopped for the day due to loss limit"
         }
 
+    # Load and tick the "already held" cooldown store.  Every new session
+    # decrements each symbol's remaining count by 1, releasing the suppression
+    # after _ALREADY_HELD_COOLDOWN_CYCLES cycles (~1.5 h at 30-min cadence).
+    _cooldown_state = _tick_cooldown(_load_cooldown())
+    _save_cooldown(_cooldown_state)
+
     # Step 2: Build market snapshot.
     # Both equities and crypto are gated to the 12-hour trading window
     # (08:00–20:00 EST, Mon–Fri). Outside the window the bot exits early —
@@ -385,14 +446,32 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
         # Refresh account context so the new-entry logic sees the updated positions
         account = fetcher.get_account_snapshot()
 
-    # Step 3b: Get Claude's decision for new entries
+    # Step 3b: Get Claude's decision for new entries.
+    # Filter out symbols on "already held" cooldown so Claude doesn't keep
+    # proposing BUYs that the executor will immediately reject (H-2, audit 2026-05-25).
+    market_snapshot_filtered = _apply_cooldown_filter(market_snapshot, _cooldown_state)
     logger.info("Sending to Claude for analysis...")
-    decision = decision_agent.analyze_market(market_snapshot, account)
+    decision = decision_agent.analyze_market(market_snapshot_filtered, account)
     logger.info(f"Claude decision: {decision.get('action')} {decision.get('symbol', '')} | Confidence: {decision.get('confidence', 'N/A')}")
 
     # Step 4: Execute
     execution_result = executor.place_order(decision, account)
     logger.info(f"Execution result: {execution_result.get('status')} — {execution_result.get('reason', 'OK')}")
+
+    # H-2 fix: if the executor rejected with "Already hold …", put the symbol
+    # on cooldown so the signal is suppressed for the next N cycles.
+    _exec_reason = execution_result.get("reason", "")
+    if (
+        execution_result.get("status") == "CANCELLED"
+        and "Already hold" in _exec_reason
+        and decision.get("symbol")
+    ):
+        _cooldown_state = _add_cooldown(_cooldown_state, decision["symbol"])
+        _save_cooldown(_cooldown_state)
+        logger.info(
+            f"Already-held cooldown set for {decision['symbol']} "
+            f"({_ALREADY_HELD_COOLDOWN_CYCLES} cycles)"
+        )
 
     # Step 4b: Enrich SKIP reason with best-candidate info so the journal is
     # auditable.  "Action is SKIP — no order placed" with no signal context is
@@ -538,6 +617,13 @@ def run_analyst_full(config: dict) -> dict:
     return result
 
 
+def _scrub_telegram_token(msg: str, token: str | None) -> str:
+    # urllib3 puts the full request URL (with bot token in path) into the
+    # str() of MaxRetryError and friends — stringifying the exception into
+    # a log line would leak the token. Strip it before any logger.* call.
+    return msg.replace(token, "<TELEGRAM_TOKEN>") if token else msg
+
+
 def send_telegram_alert(text: str) -> None:
     """
     Send a plain-text Telegram alert. Used for bot-level failures
@@ -558,7 +644,7 @@ def send_telegram_alert(text: str) -> None:
             timeout=5,
         )
     except Exception as e:
-        logger.warning(f"Telegram alert failed: {e}")
+        logger.warning(f"Telegram alert failed: {_scrub_telegram_token(str(e), token)}")
 
 
 def _send_analyst_telegram_notification(in_count: int, out_count: int):
@@ -588,7 +674,7 @@ def _send_analyst_telegram_notification(in_count: int, out_count: int):
             timeout=5,
         )
     except Exception as e:
-        logger.warning(f"Analyst Telegram notification failed: {e}")
+        logger.warning(f"Analyst Telegram notification failed: {_scrub_telegram_token(str(e), token)}")
 
 
 def _tg_escape(text: str) -> str:
@@ -746,7 +832,7 @@ def send_telegram_notification(
             timeout=5,
         )
     except Exception as e:
-        logger.warning(f"Telegram notification failed: {e}")
+        logger.warning(f"Telegram notification failed: {_scrub_telegram_token(str(e), token)}")
 
 
 if __name__ == "__main__":
@@ -802,7 +888,7 @@ if __name__ == "__main__":
                         timeout=10,
                     )
             except Exception as e:
-                logger.warning(f"Refresh notification failed: {e}")
+                logger.warning(f"Refresh notification failed: {_scrub_telegram_token(str(e), tg_token)}")
             print(json.dumps({"refreshed": True, "reason": reason, **result}))
     elif mode == "test":
         # Quick test — just fetch data and log, no trades

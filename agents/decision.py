@@ -5,10 +5,13 @@ and returns a structured trade decision with full reasoning.
 """
 
 import os
+import ssl
 import json
+import time
 import logging
 from pathlib import Path
 from typing import Optional
+import httpx
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
@@ -44,7 +47,15 @@ class TradingDecisionAgent:
     """
 
     def __init__(self, claude_md_path: str = "CLAUDE.md"):
-        self.client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        # Norton Antivirus TLS inspection re-signs certificates with a CA whose
+        # Basic Constraints extension is not marked critical. Python's httpx
+        # (used by the Anthropic SDK) rejects this under strict RFC 5280 mode.
+        # Pass a custom SSL context with that specific check relaxed.
+        _ssl_ctx = ssl.create_default_context()
+        _ssl_ctx.load_default_certs()
+        _ssl_ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+        _http_client = httpx.Client(verify=_ssl_ctx)
+        self.client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), http_client=_http_client)
         self.model = "claude-sonnet-4-6"
 
         try:
@@ -65,36 +76,99 @@ class TradingDecisionAgent:
         """
         Send the market snapshot to Claude and get a trading decision back.
         Returns a structured decision object.
+
+        H-4 fix (audit 2026-05-25): retries connection errors up to 3 times
+        with 5-second backoff before giving up and returning a SKIP.
+        Rate-limit errors (429) use a longer 30-second backoff.
+        Auth / credit errors are not retried — they won't self-heal.
         """
 
         # Build the user message
         user_message = self._build_analysis_prompt(market_snapshot, account_snapshot)
 
-        try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=4000,
-                system=self.system_prompt,
-                messages=[
-                    {"role": "user", "content": user_message}
-                ]
-            )
+        _NO_RETRY_KINDS = {"auth", "credit_exhausted"}
+        _MAX_ATTEMPTS   = 3
+        _BACKOFF_S      = 5      # seconds between connection-error retries
+        _RATE_BACKOFF_S = 30     # seconds to wait after a rate-limit response
 
-            raw_response = response.content[0].text
-            decision = self._parse_decision(raw_response)
-            decision["raw_reasoning"] = raw_response
-            return decision
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=4000,
+                    system=self.system_prompt,
+                    messages=[
+                        {"role": "user", "content": user_message}
+                    ]
+                )
 
-        except Exception as e:
-            logger.error(f"Claude API error: {e}")
-            return {
-                "action": "SKIP",
-                "symbol": None,
-                "reasoning": f"Claude API error: {str(e)}",
-                "journal_entry": f"Session skipped due to API error: {str(e)}",
-                "api_error": True,
-                "api_error_kind": _classify_api_error(e),
-            }
+                raw_response = response.content[0].text
+                decision = self._parse_decision(raw_response)
+                decision["raw_reasoning"] = raw_response
+
+                # Enforce 14:55 EST market close cutoff for BUY orders.
+                # Belt-and-suspenders second gate behind main.is_trading_window;
+                # protects against bypasses (manual runs, future code paths).
+                if decision.get("action", "").upper() == "BUY":
+                    timestamp_str = market_snapshot.get("timestamp", "")
+                    if timestamp_str:
+                        try:
+                            from datetime import datetime as _dt
+                            import pytz
+                            _est = pytz.timezone("America/New_York")
+                            dt = _dt.fromisoformat(timestamp_str)
+                            if dt.tzinfo is None:
+                                dt = _est.localize(dt)
+                            dt_est = dt.astimezone(_est)
+                            if dt_est.hour > 14 or (dt_est.hour == 14 and dt_est.minute >= 55):
+                                decision["action"] = "SKIP"
+                                decision["rejection_reason"] = (
+                                    f"Entry after market close cutoff (14:55 EST). "
+                                    f"Current time: {dt_est.strftime('%H:%M')} EST"
+                                )
+                                logger.warning(
+                                    f"Rejected {decision.get('symbol')} BUY after 14:55 EST "
+                                    f"— time: {dt_est.isoformat()}"
+                                )
+                        except (ValueError, TypeError) as e:
+                            logger.warning(
+                                f"Could not parse timestamp for cutoff check "
+                                f"({type(e).__name__}): {e} — timestamp_str={timestamp_str!r}"
+                            )
+
+                return decision
+
+            except Exception as e:
+                last_exc = e
+                kind = _classify_api_error(e)
+
+                if kind in _NO_RETRY_KINDS:
+                    # Auth / billing failures won't self-heal — fail immediately.
+                    logger.error(f"Claude API error (no retry — {kind}): {e}")
+                    break
+
+                if attempt < _MAX_ATTEMPTS:
+                    wait = _RATE_BACKOFF_S if kind == "rate_limit" else _BACKOFF_S
+                    logger.warning(
+                        f"Claude API error (attempt {attempt}/{_MAX_ATTEMPTS}, "
+                        f"kind={kind}, retrying in {wait}s): {e}"
+                    )
+                    time.sleep(wait)
+                else:
+                    logger.error(
+                        f"Claude API error (attempt {attempt}/{_MAX_ATTEMPTS}, "
+                        f"kind={kind}, giving up): {e}"
+                    )
+
+        return {
+            "action": "SKIP",
+            "symbol": None,
+            "reasoning": f"Claude API error: {str(last_exc)}",
+            "journal_entry": f"Session skipped due to API error: {str(last_exc)}",
+            "api_error": True,
+            "api_error_kind": _classify_api_error(last_exc) if last_exc else "other",
+        }
 
     def analyze_single_symbol(self, symbol_data: dict, account: dict) -> dict:
         """Analyze a single symbol from the watchlist."""
@@ -124,26 +198,40 @@ Apply your signal scoring and guardrails. Return your decision as JSON.
 If signal_score < {self._min_score} or regime is TRENDING, the answer must be SKIP.
 """
 
-        try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=1000,
-                system=self.system_prompt,
-                messages=[{"role": "user", "content": prompt}]
-            )
+        _NO_RETRY_KINDS = {"auth", "credit_exhausted"}
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, 4):
+            try:
+                response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=1000,
+                    system=self.system_prompt,
+                    messages=[{"role": "user", "content": prompt}]
+                )
 
-            raw = response.content[0].text
-            return self._parse_decision(raw)
+                raw = response.content[0].text
+                return self._parse_decision(raw)
 
-        except Exception as e:
-            logger.error(f"Decision error for {symbol_data.get('symbol', 'UNKNOWN')}: {e}")
-            return {
-                "action": "SKIP",
-                "symbol": symbol_data.get("symbol"),
-                "reasoning": str(e),
-                "api_error": True,
-                "api_error_kind": _classify_api_error(e),
-            }
+            except Exception as e:
+                last_exc = e
+                kind = _classify_api_error(e)
+                if kind in _NO_RETRY_KINDS:
+                    logger.error(f"Decision error for {symbol_data.get('symbol', 'UNKNOWN')} (no retry — {kind}): {e}")
+                    break
+                if attempt < 3:
+                    wait = 30 if kind == "rate_limit" else 5
+                    logger.warning(f"Decision error for {symbol_data.get('symbol', 'UNKNOWN')} (attempt {attempt}/3, retrying in {wait}s): {e}")
+                    time.sleep(wait)
+                else:
+                    logger.error(f"Decision error for {symbol_data.get('symbol', 'UNKNOWN')} (attempt {attempt}/3, giving up): {e}")
+
+        return {
+            "action": "SKIP",
+            "symbol": symbol_data.get("symbol"),
+            "reasoning": str(last_exc),
+            "api_error": True,
+            "api_error_kind": _classify_api_error(last_exc) if last_exc else "other",
+        }
 
     def run_weekly_review(self, journal_entries: list) -> str:
         """
