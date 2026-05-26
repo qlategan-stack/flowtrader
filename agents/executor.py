@@ -378,8 +378,11 @@ class OrderExecutor:
         p = self.profile
 
         # ── Account context ───────────────────────────────────────────────────
+        # H-3 (audit 2026-05-26): current_positions for the max_open_positions
+        # cap is the COMBINED venue-aggregate count when main.py has augmented
+        # `account` with it. Fall back to per-venue count when called outside
+        # the main loop (tests, scripts).
         if is_crypto:
-            # Prefer Binance when API key is configured; fall back to Bybit.
             crypto_client = _get_crypto_client()
             crypto_bal = crypto_client.get_balance()
             if "error" in crypto_bal:
@@ -387,7 +390,11 @@ class OrderExecutor:
                 return {"status": "CANCELLED", "reason": f"{exchange_name} balance fetch failed: {crypto_bal['error']}", "symbol": symbol}
             account_value     = float(crypto_bal.get("account_value", 0))
             buying_power      = float(crypto_bal.get("free_usdt",     0))
-            current_positions = int(crypto_bal.get("open_positions",  0))
+            current_positions = int(
+                account.get("open_positions")
+                if account.get("open_positions") is not None
+                else crypto_bal.get("open_positions", 0)
+            )
             day_pl            = 0.0
         else:
             crypto_client = None

@@ -164,7 +164,48 @@ def _apply_cooldown_filter(market_snapshot: dict, state: dict) -> dict:
     return {**market_snapshot, "watchlist": filtered}
 
 
-def _compute_held_symbols(account: dict, watchlist_symbols: list[str]) -> set[str]:
+def _fetch_crypto_balance() -> dict:
+    """Live crypto exchange balance; returns {} on failure (logged warning)."""
+    try:
+        from agents.executor import _get_crypto_client
+        return _get_crypto_client().get_balance() or {}
+    except Exception as e:
+        logger.warning(f"Crypto balance fetch failed: {e}")
+        return {}
+
+
+def _significant_crypto_positions(crypto_balance: dict, min_usd: float = 10.0) -> list[dict]:
+    """Crypto positions worth >= min_usd (excludes faucet dust)."""
+    return [
+        p for p in (crypto_balance.get("positions") or [])
+        if float(p.get("value_usd") or 0) >= min_usd
+    ]
+
+
+def _augment_account_with_combined_positions(account: dict, crypto_balance: dict) -> dict:
+    """
+    Mutate `account` so `open_positions` is the venue-aggregate (equity +
+    non-dust crypto) and the per-venue breakdowns are exposed.
+
+    H-3 fix (audit 2026-05-26): the executor's max_open_positions gate was
+    seeing equity-only counts, so equity=3 + crypto=4 read as "3/5 used" and
+    the bot could exceed the hard cap of 5 with crypto positions. Combining
+    here means every downstream consumer (decision agent prompt, executor
+    gate) sees the same number.
+    """
+    equity_count = int(account.get("open_positions") or 0)
+    crypto_count = len(_significant_crypto_positions(crypto_balance))
+    account["equity_positions"] = equity_count
+    account["crypto_positions"] = crypto_count
+    account["open_positions"] = equity_count + crypto_count
+    return account
+
+
+def _compute_held_symbols(
+    account: dict,
+    watchlist_symbols: list[str],
+    crypto_balance: dict | None = None,
+) -> set[str]:
     """
     Return the set of symbols the bot already holds, across equity and crypto
     venues, matched against the supplied watchlist.
@@ -174,8 +215,8 @@ def _compute_held_symbols(account: dict, watchlist_symbols: list[str]) -> set[st
     were re-proposed every ~2 hours and re-rejected — wasting Claude calls.
     The authoritative source is the live position list, not a counter.
 
-    Crypto exchange balance is fetched fresh; failure degrades to equity-only
-    filtering (logged warning, no crash).
+    Pass `crypto_balance` to reuse a fetch from elsewhere in the cycle
+    (e.g. H-3 position-count); omit it for one-shot use.
     """
     held: set[str] = set()
 
@@ -185,23 +226,16 @@ def _compute_held_symbols(account: dict, watchlist_symbols: list[str]) -> set[st
         if sym and float(pos.get("qty", 0) or 0) > 0:
             held.add(sym)
 
-    # Crypto — match base coin (e.g. "NEAR") against any "*/USDT" pair in
-    # the watchlist. >=$10 filter excludes faucet dust on Binance testnet.
+    # Crypto — match base coin against any "*/USDT" pair in the watchlist
     crypto_pairs = [s for s in watchlist_symbols if "/" in s]
     if crypto_pairs:
-        try:
-            from agents.executor import _get_crypto_client
-            bal = _get_crypto_client().get_balance() or {}
-            held_coins = {
-                str(p.get("currency", "")).upper()
-                for p in (bal.get("positions") or [])
-                if float(p.get("value_usd") or 0) >= 10
-            }
-            for pair in crypto_pairs:
-                if pair.split("/")[0].upper() in held_coins:
-                    held.add(pair)
-        except Exception as e:
-            logger.warning(f"Crypto held-symbols check failed (equity-only filter): {e}")
+        if crypto_balance is None:
+            crypto_balance = _fetch_crypto_balance()
+        significant = _significant_crypto_positions(crypto_balance)
+        held_coins = {str(p.get("currency", "")).upper() for p in significant}
+        for pair in crypto_pairs:
+            if pair.split("/")[0].upper() in held_coins:
+                held.add(pair)
 
     return held
 # ── End cooldown store ─────────────────────────────────────────────────────────
@@ -489,13 +523,20 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
         account = fetcher.get_account_snapshot()
 
     # Step 3b: Get Claude's decision for new entries.
-    # Filter out symbols the bot already holds + any on cycle-counter cooldown.
-    # The live-holdings check is authoritative; the counter handles transient
-    # cases (SUBMITTED-but-not-yet-settled). H-2 audit 2026-05-26.
+    # Fetch crypto balance ONCE per cycle and use it for both (a) held-symbols
+    # watchlist filter [H-2] and (b) combined position count for the
+    # max_open_positions gate [H-3]. Both audit 2026-05-26.
     _watchlist_symbols = [s.get("symbol") for s in (market_snapshot.get("watchlist") or []) if s.get("symbol")]
-    _held = _compute_held_symbols(account, _watchlist_symbols)
+    _crypto_bal = _fetch_crypto_balance()
+    _augment_account_with_combined_positions(account, _crypto_bal)  # H-3
+    _held = _compute_held_symbols(account, _watchlist_symbols, crypto_balance=_crypto_bal)  # H-2
     if _held:
         logger.info(f"Already-holding filter: suppressing {sorted(_held)} from this cycle (live positions)")
+    if account.get("crypto_positions"):
+        logger.info(
+            f"Combined position count: {account['open_positions']} "
+            f"(equity={account['equity_positions']}, crypto={account['crypto_positions']})"
+        )
     _combined_state = {**_cooldown_state, **{sym: 1 for sym in _held}}
     market_snapshot_filtered = _apply_cooldown_filter(market_snapshot, _combined_state)
     logger.info("Sending to Claude for analysis...")
