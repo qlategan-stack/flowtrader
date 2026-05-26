@@ -29,7 +29,8 @@ risk_profiles:
     max_daily_loss_pct: 0.02    # 2% — stop trading for the day
     max_position_pct: 0.10      # 10% of account per order
     risk_pct_per_trade: 0.01    # 1% account risk per trade
-    min_signal_score: 3         # needs 3+ signals out of 6
+    min_signal_score: 3         # crypto threshold (3+ of 6 signals)
+    equity_min_signal_score: 2  # equity threshold — 1 lower than crypto (M-1 audit 2026-05-26 experiment)
     max_stop_distance_pct: 0.05 # stop no more than 5% from entry
     min_order_value: 100        # minimum $100 order
 
@@ -38,7 +39,8 @@ risk_profiles:
     max_daily_loss_pct: 0.04    # 4% — wider daily loss tolerance
     max_position_pct: 0.10      # 10% of account per order (hard ceiling)
     risk_pct_per_trade: 0.015   # 1.5% account risk per trade
-    min_signal_score: 2         # enters on 2+ signals out of 6
+    min_signal_score: 2         # crypto threshold (2+ of 6 signals)
+    equity_min_signal_score: 1  # equity threshold — 1 lower than crypto (M-1 audit 2026-05-26 experiment)
     max_stop_distance_pct: 0.08 # stop up to 8% from entry
     min_order_value: 50         # minimum $50 order
 
@@ -47,7 +49,8 @@ risk_profiles:
     max_daily_loss_pct: 0.06    # 6% — aggressive daily loss tolerance
     max_position_pct: 0.05      # 5% of account per order
     risk_pct_per_trade: 0.02    # 2% account risk per trade
-    min_signal_score: 1         # enters on any single signal out of 6
+    min_signal_score: 1         # crypto threshold (any single signal)
+    equity_min_signal_score: 1  # equity = crypto at this profile (already at floor)
     max_stop_distance_pct: 0.12 # stop up to 12% from entry
     min_order_value: 25         # minimum $25 order
     always_max_position: true   # always size at max_position_pct — no risk-per-share calc

@@ -70,7 +70,14 @@ class TradingDecisionAgent:
         from agents.executor import load_risk_profile
         self._profile_name, self._profile = load_risk_profile()
         self._min_score = self._profile.get("min_signal_score", 3)
-        logger.info(f"Decision agent using profile '{self._profile_name}' — min_signal_score={self._min_score}")
+        # M-1 (audit 2026-05-26) Option A experiment: equities can use a
+        # lower threshold than crypto. Falls back to the global min when
+        # the per-class override is absent.
+        self._equity_min_score = self._profile.get("equity_min_signal_score", self._min_score)
+        logger.info(
+            f"Decision agent using profile '{self._profile_name}' — "
+            f"min_signal_score=crypto:{self._min_score} equity:{self._equity_min_score}"
+        )
 
     def analyze_market(self, market_snapshot: dict, account_snapshot: dict) -> dict:
         """
@@ -195,7 +202,8 @@ RECENT HEADLINES:
 {json.dumps(symbol_data.get('recent_headlines', [])[:3], indent=2)}
 
 Apply your signal scoring and guardrails. Return your decision as JSON.
-If signal_score < {self._min_score} or regime is TRENDING, the answer must be SKIP.
+Signal-score threshold for this symbol: {self._min_score} (use {self._equity_min_score} if the symbol is a US equity ticker without '/').
+If active score is below that threshold or regime is TRENDING, the answer must be SKIP.
 """
 
         _NO_RETRY_KINDS = {"auth", "credit_exhausted"}
@@ -302,7 +310,7 @@ Be honest and specific. Identify real patterns, not generic advice.
         return f"""
 TRADING SESSION — {snapshot.get('timestamp', 'Unknown time')}
 
-RISK PROFILE: {self._profile_name} (min signal score to enter: {self._min_score}/6)
+RISK PROFILE: {self._profile_name} (min signal score to enter — crypto: {self._min_score}/6, equities: {self._equity_min_score}/6 — M-1 audit 2026-05-26 experiment)
 
 ACCOUNT:
 - Portfolio: ${account.get('portfolio_value', 0):,.2f}
@@ -352,7 +360,10 @@ a ```json code fence. Do NOT write any analysis or prose before the JSON block.
 Reasoning and journal_entry go inside the JSON fields, not outside it.
 
 Active risk profile requires the active score (mean reversion OR momentum,
-matching strategy_mode) >= {self._min_score} to enter. SKIP freely below that threshold.
+matching strategy_mode) >= {self._min_score} for crypto pairs and
+>= {self._equity_min_score} for US equity tickers (M-1 audit 2026-05-26 experiment
+— lower equity threshold to test whether the bot's structural crypto-tilt
+flips). SKIP freely below the applicable per-class threshold.
 """
 
     def _parse_decision(self, raw_text: str) -> dict:

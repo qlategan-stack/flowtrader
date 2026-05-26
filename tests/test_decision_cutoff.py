@@ -39,8 +39,9 @@ def _agent_returning_buy() -> TradingDecisionAgent:
     agent.system_prompt = "test"
     agent.research_memo = {}
     agent._profile_name = "test"
-    agent._profile = {"min_signal_score": 1, "max_open_positions": 5}
+    agent._profile = {"min_signal_score": 1, "equity_min_signal_score": 1, "max_open_positions": 5}
     agent._min_score = 1
+    agent._equity_min_score = 1
     return agent
 
 

@@ -67,8 +67,9 @@ def _make_agent_with_failing_client(exc: Exception) -> TradingDecisionAgent:
     agent.system_prompt = "test"
     agent.research_memo = {}
     agent._profile_name = "test"
-    agent._profile = {"min_signal_score": 3, "max_open_positions": 3}
+    agent._profile = {"min_signal_score": 3, "equity_min_signal_score": 2, "max_open_positions": 3}
     agent._min_score = 3
+    agent._equity_min_score = 2
     return agent
 
 
@@ -101,8 +102,9 @@ def test_analyze_market_does_not_tag_on_success():
     agent.system_prompt = "test"
     agent.research_memo = {}
     agent._profile_name = "test"
-    agent._profile = {"min_signal_score": 3, "max_open_positions": 3}
+    agent._profile = {"min_signal_score": 3, "equity_min_signal_score": 2, "max_open_positions": 3}
     agent._min_score = 3
+    agent._equity_min_score = 2
 
     decision = agent.analyze_market({"watchlist": []}, {})
     assert decision.get("api_error") is not True

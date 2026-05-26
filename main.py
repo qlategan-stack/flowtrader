@@ -679,7 +679,12 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
     if execution_result.get("status") == "SKIPPED":
         wl = market_snapshot.get("watchlist") or []
         best = None
-        min_score = executor.profile.get("min_signal_score", 2)
+        # M-1 (audit 2026-05-26) Option A: per-class threshold — equity rows
+        # use equity_min_signal_score so the journal's "needs N+" text matches
+        # what Claude was actually asked to enforce for that symbol.
+        crypto_min = executor.profile.get("min_signal_score", 2)
+        equity_min = executor.profile.get("equity_min_signal_score", crypto_min)
+        min_score = crypto_min  # default — overridden below once we know the symbol
         if wl:
             best = max(
                 wl,
@@ -689,6 +694,7 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
                 )
             )
             best_sym   = best.get("symbol", "?")
+            min_score  = crypto_min if "/" in best_sym else equity_min
             best_ind   = best.get("indicators", {})
             best_mr    = best_ind.get("signal_score", 0)
             best_mom   = best_ind.get("momentum_score", 0)
