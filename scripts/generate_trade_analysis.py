@@ -37,6 +37,7 @@ from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger("trade-analysis")
 
@@ -701,8 +702,8 @@ def main() -> int:
         logger.warning(f"No entries found in {journal_path}")
         return 1
 
-    # Prefer most recent date with actual failures so the report is useful.
-    # Fall back to latest trading date if there are no failures at all.
+    # Featured-failures date: most recent date with real failures so the body
+    # of the report is useful even if today is uneventful.
     report_date = (
         args.report_date
         or most_recent_failure_date(entries)
@@ -712,8 +713,15 @@ def main() -> int:
         logger.warning("No actionable entries found in journal")
         return 1
 
+    # H-5 (audit 2026-05-26): the 7-day summary window must end on TODAY,
+    # not on the featured-failures date — otherwise a 4-day-stale failure
+    # date drags the summary 4 days behind real activity even though the
+    # bot has run new cycles since. The featured failures tab still keys
+    # off report_date.
+    today_est = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    summary_end_date = max(today_est, report_date)  # never roll the window backward
     failures = find_failures(entries, report_date)
-    summary  = seven_day_summary(entries, report_date)
+    summary  = seven_day_summary(entries, summary_end_date)
 
     # Claude lessons
     if not args.no_claude and failures:

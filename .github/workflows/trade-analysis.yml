@@ -9,9 +9,13 @@ name: FlowTrader — Daily Trade Analysis
 
 on:
   schedule:
-    # 04:00 UTC = 06:00 SAST. Tue–Sat covers Mon–Fri US trading sessions
-    # (each report runs the morning AFTER the trading day it analyses).
-    - cron: '0 4 * * 2-6'
+    # H-5 (audit 2026-05-26): bumped from once-daily to 3×/day so the
+    # dashboard's generated_at can't drift >8h on a trading session.
+    # 04:00 UTC = 06:00 SAST (morning after-action review)
+    # 12:00 UTC = 14:00 SAST = 08:00 EDT (pre-US-open snapshot)
+    # 20:00 UTC = 22:00 SAST = 16:00 EDT (post-US-close snapshot)
+    # Mon–Sat covers Fri evening + Sat morning for full Fri activity.
+    - cron: '0 4,12,20 * * 1-6'
   workflow_dispatch:
     inputs:
       report_date:
