@@ -748,11 +748,21 @@ top_crypto_opportunities, crypto_risk_warnings
 
         except Exception as e:
             logger.error(f"Memo generation error: {e}")
+            # M-4 (audit 2026-05-26): API failure formerly wrote confidence=0
+            # which made the decision agent blanket-halve every position size.
+            # Default to neutral (5) so we don't shrink trades for a technical
+            # outage; tag failure_kind so the decision agent can emit a
+            # "research unavailable" notice instead of "VERY LOW CONFIDENCE".
             return {
                 "error": str(e),
+                "failure_kind": "api_error",
                 "market_regime": "UNKNOWN",
-                "confidence_score": 0,
-                "confidence_reason": "Analysis failed — do not trade until resolved"
+                "confidence_score": 5,
+                "confidence_reason": (
+                    f"Memo generation failed ({type(e).__name__}); using neutral "
+                    "confidence so sizing is not penalised for a technical outage. "
+                    "Trade off live indicators."
+                ),
             }
 
     def _parse_memo(self, raw_text: str) -> dict:

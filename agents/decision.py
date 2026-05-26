@@ -534,7 +534,20 @@ matching strategy_mode) >= {self._min_score} to enter. SKIP freely below that th
             lines.append("")
             lines.append(f"- Key Cross-Asset Risk Warning: {top_warning}")
 
-        if confidence <= 3:
+        # M-4 (audit 2026-05-26): when the memo failed for a technical reason
+        # (API outage, parse error, network), use a research-unavailable notice
+        # instead of the confidence-based sizing hint. A 0/10 from a real
+        # analytic abstention still triggers the VERY LOW LINE; an api_error
+        # confidence=5 default skips both branches.
+        if memo.get("failure_kind") == "api_error":
+            lines.append("")
+            lines.append(
+                "- RESEARCH BRIEF UNAVAILABLE: weekly memo failed to generate "
+                "for technical reasons; trade off live indicators only. Do NOT "
+                "halve sizing on this basis — the confidence number is a neutral "
+                "fallback, not a low-conviction signal."
+            )
+        elif confidence <= 3:
             lines.append("")
             lines.append("- VERY LOW CONFIDENCE: Only A-grade setups. Halve normal position size.")
         elif confidence <= 5:
