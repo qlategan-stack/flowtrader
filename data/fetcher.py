@@ -171,6 +171,16 @@ class MarketDataFetcher:
 
             trending = current_adx > 30
 
+            # Directional prerequisite gate: mean reversion requires price to be
+            # BELOW the mean, not above it. If price is above the upper BB AND RSI
+            # is not oversold, the setup is an overbought extension — the opposite
+            # of what this strategy enters. Zero the score so regime/math signals
+            # (which are direction-agnostic) cannot manufacture a false long signal.
+            overbought_extension = (current_price > bb_upper) and (current_rsi > 55)
+            if overbought_extension:
+                score = 0
+                signals = ["DIRECTIONAL_GATE_FAILED: price above upper BB and RSI>55 — overbought, not oversold"]
+
             return {
                 "current_price": current_price,
                 "rsi": round(current_rsi, 2),
@@ -189,8 +199,9 @@ class MarketDataFetcher:
                 "take_profit_price": round(ma20, 2),
                 "signal_score": score,
                 "signals_fired": signals,
+                "overbought_extension": overbought_extension,
                 "regime": "TRENDING" if trending else "RANGING",
-                "mean_reversion_eligible": not trending and score >= min_score
+                "mean_reversion_eligible": not trending and not overbought_extension and score >= min_score
             }
 
         except Exception as e:
@@ -364,10 +375,19 @@ class MarketDataFetcher:
                     elif had_below_bb and not now_below_bb:
                         fired = [s for s in fired if "BelowLowerBB" not in s]
                         score -= 1
+                    # Re-apply directional gate with live price
+                    bb_upper = indicators.get("bollinger", {}).get("upper", 0)
+                    live_rsi = indicators.get("rsi", 50)
+                    live_overbought = (bb_upper > 0 and live_price > bb_upper) and (live_rsi > 55)
+                    if live_overbought:
+                        score = 0
+                        fired = ["DIRECTIONAL_GATE_FAILED: price above upper BB and RSI>55 — overbought, not oversold"]
+                    indicators["overbought_extension"] = live_overbought
                     indicators["signals_fired"] = fired
                     indicators["signal_score"] = max(0, score)
                     indicators["mean_reversion_eligible"] = (
                         indicators.get("adx", 30) <= 30
+                        and not live_overbought
                         and indicators["signal_score"] >= min_score
                     )
                 if atr > 0:
