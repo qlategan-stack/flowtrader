@@ -244,17 +244,18 @@ JOURNAL ENTRIES ({len(entries)} entries, last {days} days):
 Analyze this data from a strategic perspective. Return 1-3 high-impact suggestions as a JSON array."""
 
     def _call_claude(self, prompt: str) -> str | None:
-        try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=4000,
-                system=self.SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return response.content[0].text
-        except Exception as e:
-            logger.error(f"OutStrategyAnalyst Claude API error: {e}")
-            return None
+        # M-3 (audit 2026-05-26): single-shot call was producing daily 429s
+        # against the 30k-tokens/min limit on claude-sonnet-4-6, silently
+        # killing the suggestion pipeline. Retries 3× with rate-limit backoff.
+        from agents._claude_retry import call_with_retry
+        text, _kind = call_with_retry(
+            self.client,
+            agent_name="OutStrategyAnalyst",
+            model=self.model,
+            system=self.SYSTEM_PROMPT,
+            user_content=prompt,
+        )
+        return text
 
     def _parse_suggestions(self, raw: str) -> list[dict]:
         patterns = [

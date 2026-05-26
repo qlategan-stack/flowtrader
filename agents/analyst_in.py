@@ -169,17 +169,16 @@ JOURNAL ENTRIES ({len(entries)} entries, last {days} days):
 Analyze this data and return 1-3 high-impact improvement suggestions as a JSON array."""
 
     def _call_claude(self, prompt: str) -> str:
-        try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=4000,
-                system=self.SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return response.content[0].text
-        except Exception as e:
-            logger.error(f"InStrategyAnalyst Claude API error: {e}")
-            return "[]"
+        # M-3 (audit 2026-05-26): same 429 rate-limit issue as OutStrategyAnalyst.
+        from agents._claude_retry import call_with_retry
+        text, _kind = call_with_retry(
+            self.client,
+            agent_name="InStrategyAnalyst",
+            model=self.model,
+            system=self.SYSTEM_PROMPT,
+            user_content=prompt,
+        )
+        return text if text is not None else "[]"
 
     def _parse_suggestions(self, raw: str) -> list[dict]:
         patterns = [
