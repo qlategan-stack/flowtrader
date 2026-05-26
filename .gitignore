@@ -25,7 +25,14 @@ env/
 
 # Logs and journals (kept locally, uploaded as GitHub artifacts)
 journal/bot.log
+journal/bot.log.*
 journal/last_api_alert.json
+# trades.jsonl is the canonical trade log. The dashboard sync workflow
+# (push_journal.py) is the authoritative uploader; the bot's local copy is a
+# rolling working set and must not be committed from the bot repo.
+journal/trades.jsonl
+journal/already_held_cooldown.json
+*.log
 
 
 # OS
