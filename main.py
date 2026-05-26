@@ -119,6 +119,12 @@ logger = logging.getLogger("FlowTrader")
 _ALREADY_HELD_COOLDOWN_FILE = Path("journal/already_held_cooldown.json")
 _ALREADY_HELD_COOLDOWN_CYCLES = int(os.getenv("ALREADY_HELD_COOLDOWN_CYCLES", "3"))
 
+# M-2 fix (audit 2026-05-26): ETH/USDT was 40% of all 30d BUY entries because
+# a hot signal kept re-firing every cycle. Cap entries per symbol per calendar
+# day so attempts spread across the watchlist instead of concentrating.
+_MAX_BUYS_PER_SYMBOL_PER_DAY = int(os.getenv("MAX_BUYS_PER_SYMBOL_PER_DAY", "2"))
+_TRADES_JOURNAL_FILE = Path("journal/trades.jsonl")
+
 
 def _load_cooldown() -> dict:
     """Return {symbol: cycles_remaining} from the cooldown store."""
@@ -180,6 +186,52 @@ def _significant_crypto_positions(crypto_balance: dict, min_usd: float = 10.0) -
         p for p in (crypto_balance.get("positions") or [])
         if float(p.get("value_usd") or 0) >= min_usd
     ]
+
+
+def _symbols_at_daily_buy_cap(
+    today_est: str | None = None,
+    cap: int = _MAX_BUYS_PER_SYMBOL_PER_DAY,
+    journal_file: Path | None = None,
+) -> set[str]:
+    """
+    Return symbols that have already hit the per-day BUY cap, computed by
+    scanning trades.jsonl for today's BUYs (any execution_status that
+    represents a real attempt — SUBMITTED/FILLED/CANCELLED/REJECTED count).
+
+    M-2 fix (audit 2026-05-26): one hot symbol was dominating activity; this
+    spreads the next entries across the rest of the watchlist.
+    """
+    journal = journal_file or _TRADES_JOURNAL_FILE
+    if not journal.exists():
+        return set()
+    if today_est is None:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+        today_est = _dt.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    counts: dict[str, int] = {}
+    real_attempt = {"SUBMITTED", "FILLED", "PARTIAL", "CANCELLED", "REJECTED", "SIMULATED"}
+    try:
+        for line in journal.read_text(encoding="utf-8-sig").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if row.get("date") != today_est:
+                continue
+            if (row.get("action") or "").upper() != "BUY":
+                continue
+            if (row.get("execution_status") or "").upper() not in real_attempt:
+                continue
+            sym = row.get("symbol")
+            if sym:
+                counts[sym] = counts.get(sym, 0) + 1
+    except Exception as e:
+        logger.warning(f"Per-symbol throttle check failed: {e}")
+        return set()
+    return {sym for sym, n in counts.items() if n >= cap}
 
 
 def _augment_account_with_combined_positions(account: dict, crypto_balance: dict) -> dict:
@@ -530,14 +582,21 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
     _crypto_bal = _fetch_crypto_balance()
     _augment_account_with_combined_positions(account, _crypto_bal)  # H-3
     _held = _compute_held_symbols(account, _watchlist_symbols, crypto_balance=_crypto_bal)  # H-2
+    _throttled = _symbols_at_daily_buy_cap()  # M-2 — symbols that hit the daily cap
     if _held:
         logger.info(f"Already-holding filter: suppressing {sorted(_held)} from this cycle (live positions)")
+    if _throttled:
+        logger.info(
+            f"Per-symbol daily throttle: suppressing {sorted(_throttled)} "
+            f"(≥{_MAX_BUYS_PER_SYMBOL_PER_DAY} BUYs today)"
+        )
     if account.get("crypto_positions"):
         logger.info(
             f"Combined position count: {account['open_positions']} "
             f"(equity={account['equity_positions']}, crypto={account['crypto_positions']})"
         )
-    _combined_state = {**_cooldown_state, **{sym: 1 for sym in _held}}
+    _suppress = _held | _throttled
+    _combined_state = {**_cooldown_state, **{sym: 1 for sym in _suppress}}
     market_snapshot_filtered = _apply_cooldown_filter(market_snapshot, _combined_state)
     logger.info("Sending to Claude for analysis...")
     decision = decision_agent.analyze_market(market_snapshot_filtered, account)
