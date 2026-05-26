@@ -48,7 +48,10 @@ def _load_jsonl(path: Path) -> list[dict]:
     if not path.exists():
         return []
     entries = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    # utf-8-sig tolerates an accidental BOM at the start of the file (earlier
+    # writes from a notebook or PowerShell pipe left BOMs in trades.jsonl, which
+    # made json.loads fail on the first line).
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line:
             continue
@@ -126,6 +129,13 @@ def main() -> int:
 
     if not _ensure_gh_user():
         print(f"[journal-push] warning: could not switch gh to {GH_USER}, attempting push anyway")
+
+    # Pull remote changes first to avoid non-fast-forward rejections.
+    # Use --no-rebase (merge) so concurrent CI appends to trades.jsonl don't
+    # produce rebase conflicts — a merge commit on an append-only file is safe.
+    pull = _git("pull", "--no-rebase")
+    if pull.returncode != 0:
+        print(f"[journal-push] pull failed: {pull.stderr.strip()}")
 
     push = _git("push")
     if push.returncode != 0:

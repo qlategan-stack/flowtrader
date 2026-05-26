@@ -288,7 +288,7 @@ class StrategyEngine:
                     result = tda_compute(btc_prices)
                     portfolio_signals["tda"] = result
                     if result.get("crash_warning"):
-                        logger.warning("⚠️ TDA crash warning signal detected")
+                        logger.warning("TDA crash warning signal detected")
             except Exception as e:
                 logger.warning(f"TDA portfolio failed: {e}")
 

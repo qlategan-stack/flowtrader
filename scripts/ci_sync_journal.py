@@ -69,6 +69,42 @@ def sync_trades(bot_journal: Path, dash_journal: Path) -> int:
     return len(new_entries)
 
 
+def sync_suggestions(bot_file: Path, dash_file: Path) -> bool:
+    """
+    Merge bot suggestions into dashboard suggestions file.
+    Deduplicates by suggestion ID — dashboard is authoritative for status/actioned fields
+    (user approvals happen there). Bot adds new suggestions; never overwrites existing ones.
+    Returns True if dash_file changed.
+    """
+    if not bot_file.exists():
+        return False
+    dash_file.parent.mkdir(parents=True, exist_ok=True)
+
+    dash_records = _load_jsonl(dash_file)
+    bot_records  = _load_jsonl(bot_file)
+
+    dash_by_id = {r["id"]: r for r in dash_records if r.get("id")}
+    added = 0
+    for rec in bot_records:
+        sid = rec.get("id")
+        if sid and sid not in dash_by_id:
+            dash_by_id[sid] = rec
+            added += 1
+
+    if added == 0:
+        print(f"[ci-sync] {bot_file.name}: no new suggestions")
+        return False
+
+    # Write merged result preserving dashboard order then new bot entries
+    merged = list(dash_by_id.values())
+    dash_file.write_text(
+        "\n".join(json.dumps(r) for r in merged) + "\n",
+        encoding="utf-8",
+    )
+    print(f"[ci-sync] {bot_file.name}: added {added} new suggestion(s) ({len(merged)} total)")
+    return True
+
+
 def sync_file(src: Path, dst: Path) -> bool:
     """Overwrite dst with src if src exists. Returns True if dst changed."""
     if not src.exists():
@@ -105,10 +141,12 @@ def main() -> int:
         dash_journal = dash_root / "journal" / "trades.jsonl",
     )
 
-    # Sync analyst suggestions and research memo so the dashboard displays
-    # current analyst output regardless of whether the local push ran.
-    for fname in ("suggestions_in.jsonl", "suggestions_out.jsonl", "weekly_research_memo.json"):
-        sync_file(bot_root / "journal" / fname, dash_root / "journal" / fname)
+    # Merge analyst suggestions (never overwrite — dashboard is authoritative for status)
+    for fname in ("suggestions_in.jsonl", "suggestions_out.jsonl"):
+        sync_suggestions(bot_root / "journal" / fname, dash_root / "journal" / fname)
+
+    # Research memo: full overwrite is correct (single source of truth from bot)
+    sync_file(bot_root / "journal" / "weekly_research_memo.json", dash_root / "journal" / "weekly_research_memo.json")
 
     return 0
 
