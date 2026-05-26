@@ -162,6 +162,48 @@ def _apply_cooldown_filter(market_snapshot: dict, state: dict) -> dict:
         skipped = [s.get("symbol") for s in original if s.get("symbol") in on_cooldown]
         logger.info(f"Already-held cooldown: suppressing {skipped} from this cycle")
     return {**market_snapshot, "watchlist": filtered}
+
+
+def _compute_held_symbols(account: dict, watchlist_symbols: list[str]) -> set[str]:
+    """
+    Return the set of symbols the bot already holds, across equity and crypto
+    venues, matched against the supplied watchlist.
+
+    H-2 fix (audit 2026-05-26): the cycle-counter cooldown expired after 3
+    cycles but real positions persist for days, so NEAR/USDT and LTC/USDT
+    were re-proposed every ~2 hours and re-rejected — wasting Claude calls.
+    The authoritative source is the live position list, not a counter.
+
+    Crypto exchange balance is fetched fresh; failure degrades to equity-only
+    filtering (logged warning, no crash).
+    """
+    held: set[str] = set()
+
+    # Equities — Alpaca account snapshot
+    for pos in account.get("positions") or []:
+        sym = pos.get("symbol")
+        if sym and float(pos.get("qty", 0) or 0) > 0:
+            held.add(sym)
+
+    # Crypto — match base coin (e.g. "NEAR") against any "*/USDT" pair in
+    # the watchlist. >=$10 filter excludes faucet dust on Binance testnet.
+    crypto_pairs = [s for s in watchlist_symbols if "/" in s]
+    if crypto_pairs:
+        try:
+            from agents.executor import _get_crypto_client
+            bal = _get_crypto_client().get_balance() or {}
+            held_coins = {
+                str(p.get("currency", "")).upper()
+                for p in (bal.get("positions") or [])
+                if float(p.get("value_usd") or 0) >= 10
+            }
+            for pair in crypto_pairs:
+                if pair.split("/")[0].upper() in held_coins:
+                    held.add(pair)
+        except Exception as e:
+            logger.warning(f"Crypto held-symbols check failed (equity-only filter): {e}")
+
+    return held
 # ── End cooldown store ─────────────────────────────────────────────────────────
 
 # ── Import modules ─────────────────────────────────────────────────────────────
@@ -447,9 +489,15 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
         account = fetcher.get_account_snapshot()
 
     # Step 3b: Get Claude's decision for new entries.
-    # Filter out symbols on "already held" cooldown so Claude doesn't keep
-    # proposing BUYs that the executor will immediately reject (H-2, audit 2026-05-25).
-    market_snapshot_filtered = _apply_cooldown_filter(market_snapshot, _cooldown_state)
+    # Filter out symbols the bot already holds + any on cycle-counter cooldown.
+    # The live-holdings check is authoritative; the counter handles transient
+    # cases (SUBMITTED-but-not-yet-settled). H-2 audit 2026-05-26.
+    _watchlist_symbols = [s.get("symbol") for s in (market_snapshot.get("watchlist") or []) if s.get("symbol")]
+    _held = _compute_held_symbols(account, _watchlist_symbols)
+    if _held:
+        logger.info(f"Already-holding filter: suppressing {sorted(_held)} from this cycle (live positions)")
+    _combined_state = {**_cooldown_state, **{sym: 1 for sym in _held}}
+    market_snapshot_filtered = _apply_cooldown_filter(market_snapshot, _combined_state)
     logger.info("Sending to Claude for analysis...")
     decision = decision_agent.analyze_market(market_snapshot_filtered, account)
     logger.info(f"Claude decision: {decision.get('action')} {decision.get('symbol', '')} | Confidence: {decision.get('confidence', 'N/A')}")
@@ -506,11 +554,12 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
             execution_result["reason"] = f"{existing_reason} | {skip_detail}"
             logger.info(f"SKIP detail: {skip_detail}")
 
-    # Step 5: Journal
+    # Step 5: Journal — log the snapshot Claude actually saw, so top_setup_symbol
+    # reflects the post-filter watchlist (without held/cooldowned symbols).
     journal_entry = journal.log_decision(
         decision=decision,
         execution_result=execution_result,
-        market_snapshot=market_snapshot,
+        market_snapshot=market_snapshot_filtered,
         account=account
     )
 
