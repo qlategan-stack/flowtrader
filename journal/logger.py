@@ -18,6 +18,38 @@ JOURNAL_DIR = Path("journal")
 JOURNAL_FILE = JOURNAL_DIR / "trades.jsonl"
 SUMMARY_FILE = JOURNAL_DIR / "weekly_summary.md"
 
+# Canonical vocabulary for execution_status. H-6 fix (audit 2026-05-26):
+# Alpaca's OrderStatus enum can leak as "ORDERSTATUS.FILLED" via str() instead
+# of "FILLED", and ad-hoc "ERROR" / "N/A" strings broke downstream filters.
+_CANONICAL_STATUSES = {
+    "FILLED", "PARTIAL", "SUBMITTED", "CANCELLED",
+    "REJECTED", "SKIPPED", "ERROR", "SIMULATED",
+}
+
+
+def _normalize_execution_status(raw) -> str:
+    """
+    Coerce any status representation to the canonical uppercase token.
+    Handles Alpaca OrderStatus enums (str() yields "OrderStatus.FILLED"),
+    lowercase strings, surrounding whitespace, and unknown values
+    (returned as "ERROR" — recoverable but visibly non-canonical).
+    """
+    if raw is None:
+        return "ERROR"
+    s = str(raw).strip().upper()
+    if "." in s:                       # e.g. "ORDERSTATUS.FILLED" -> "FILLED"
+        s = s.rsplit(".", 1)[-1]
+    if s in _CANONICAL_STATUSES:
+        return s
+    # Common synonyms / SDK quirks
+    if s in {"PARTIALLY_FILLED", "PARTIALLYFILLED"}:
+        return "PARTIAL"
+    if s in {"CANCELED", "EXPIRED", "DONE_FOR_DAY", "REPLACED"}:
+        return "CANCELLED"
+    if s in {"N/A", "NA", "NONE", ""}:
+        return "ERROR"
+    return "ERROR"
+
 
 class TradeJournal:
     """
@@ -63,8 +95,8 @@ class TradeJournal:
             "quantity": decision.get("quantity"),
             "risk_reward": self._calc_rr(decision),
 
-            # Execution result
-            "execution_status": execution_result.get("status", "N/A"),
+            # Execution result — normalized to the canonical vocabulary
+            "execution_status": _normalize_execution_status(execution_result.get("status")),
             "order_id": execution_result.get("order_id"),
             "paper_trade": execution_result.get("paper_trade", True),
             "rejection_reason": execution_result.get("reason"),
