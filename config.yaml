@@ -35,7 +35,10 @@ risk_profiles:
     min_order_value: 100        # minimum $100 order
 
   medium_safety:
-    max_open_positions: 5
+    max_open_positions: 7       # 2026-05-28: raised 5→7 to admit the crypto sleeve.
+                                # Previously the cap was 5 equity-only and the 2 Binance
+                                # crypto positions weren't counted, causing the 5↔7
+                                # oscillation the [H-1] audit flagged. 7 = 5 equity + 2 crypto.
     max_daily_loss_pct: 0.04    # 4% — wider daily loss tolerance
     max_position_pct: 0.10      # 10% of account per order (hard ceiling)
     risk_pct_per_trade: 0.015   # 1.5% account risk per trade
