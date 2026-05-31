@@ -807,7 +807,7 @@ top_crypto_opportunities, crypto_risk_warnings
         memo["generated_at"] = now.isoformat()
         memo["valid_until"] = (now + timedelta(days=7)).isoformat()
 
-        with open(MEMO_JSON, "w") as f:
+        with open(MEMO_JSON, "w", encoding="utf-8") as f:
             json.dump(memo, f, indent=2)
 
         # Save Markdown for human review
@@ -859,7 +859,7 @@ top_crypto_opportunities, crypto_risk_warnings
 *Review before market open on Monday*
 """
 
-        with open(MEMO_FILE, "w") as f:
+        with open(MEMO_FILE, "w", encoding="utf-8") as f:
             f.write(md_content)
 
         logger.info(f"Memo saved: {MEMO_JSON} and {MEMO_FILE}")
@@ -875,7 +875,7 @@ top_crypto_opportunities, crypto_risk_warnings
             return None
 
         try:
-            with open(MEMO_JSON, "r") as f:
+            with open(MEMO_JSON, "r", encoding="utf-8") as f:
                 memo = json.load(f)
 
             # Check if memo is still valid
@@ -1066,7 +1066,7 @@ if __name__ == "__main__":
 
     # Load watchlists from config
     try:
-        with open("config.yaml", "r") as f:
+        with open("config.yaml", "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
         watchlist        = config.get("watchlist", {}).get("equities", [])
         crypto_watchlist = config.get("watchlist", {}).get("crypto", [])
