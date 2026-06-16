@@ -31,6 +31,7 @@ journal/last_api_alert.json
 # (push_journal.py) is the authoritative uploader; the bot's local copy is a
 # rolling working set and must not be committed from the bot repo.
 journal/trades.jsonl
+journal/trades.jsonl.bak.*
 journal/already_held_cooldown.json
 *.log
 

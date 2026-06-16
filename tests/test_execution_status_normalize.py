@@ -77,3 +77,24 @@ def test_na_string_becomes_error():
 def test_unknown_token_becomes_error_not_passed_through():
     # Garbage must not silently propagate into the journal.
     assert _normalize_execution_status("WAT") == "ERROR"
+
+
+# ── Executor-side Alpaca status normaliser (H-2 follow-up, audit 2026-06-10) ──
+# str(order.status) can be "OrderStatus.FILLED"; the executor's status_map and
+# terminal-state set key on lower-case bare tokens. A live MSFT fill on
+# 2026-06-16 was mislabelled SUBMITTED because the enum prefix wasn't stripped.
+
+from agents.executor import _normalize_alpaca_status
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("OrderStatus.FILLED", "filled"),
+    ("ORDERSTATUS.FILLED", "filled"),
+    ("filled", "filled"),
+    ("FILLED", "filled"),
+    ("OrderStatus.PENDING_NEW", "pending_new"),
+    ("accepted", "accepted"),
+    ("OrderStatus.CANCELED", "canceled"),
+])
+def test_normalize_alpaca_status(raw, expected):
+    assert _normalize_alpaca_status(raw) == expected

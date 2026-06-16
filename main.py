@@ -189,9 +189,18 @@ def _load_cooldown() -> dict:
 
 
 def _save_cooldown(state: dict) -> None:
-    """Persist the cooldown store (removes symbols whose count hit 0)."""
+    """Persist the cooldown store (removes symbols whose count hit 0).
+
+    M-3 (audit 2026-06-10): ensure the journal dir exists before writing so the
+    store can never silently fail to persist when the cwd/journal layout is
+    unexpected (the empty-file-but-active-cooldown symptom).
+    """
     active = {sym: n for sym, n in state.items() if n > 0}
-    _ALREADY_HELD_COOLDOWN_FILE.write_text(json.dumps(active, indent=2), encoding="utf-8")
+    try:
+        _ALREADY_HELD_COOLDOWN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _ALREADY_HELD_COOLDOWN_FILE.write_text(json.dumps(active, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Failed to persist already-held cooldown store: {e}")
 
 
 def _tick_cooldown(state: dict) -> dict:
@@ -218,7 +227,13 @@ def _apply_cooldown_filter(market_snapshot: dict, state: dict) -> dict:
     filtered = [s for s in original if s.get("symbol") not in on_cooldown]
     if len(filtered) < len(original):
         skipped = [s.get("symbol") for s in original if s.get("symbol") in on_cooldown]
-        logger.info(f"Already-held cooldown: suppressing {skipped} from this cycle")
+        # M-3 (audit 2026-06-10): this filter combines BOTH the persisted
+        # already_held_cooldown.json store AND the live-position / daily-throttle
+        # suppression merged in run_trading_session. The previous "Already-held
+        # cooldown" wording made the auditor expect every suppressed symbol in
+        # the JSON file, flagging a false discrepancy. Word it as the combined
+        # suppression set so the log matches reality.
+        logger.info(f"Cycle suppression filter: removing {skipped} from watchlist (cooldown + live holdings + throttle)")
     return {**market_snapshot, "watchlist": filtered}
 
 
@@ -232,12 +247,45 @@ def _fetch_crypto_balance() -> dict:
         return {}
 
 
-def _significant_crypto_positions(crypto_balance: dict, min_usd: float = 10.0) -> list[dict]:
-    """Crypto positions worth >= min_usd (excludes faucet dust)."""
-    return [
+def _significant_crypto_positions(
+    crypto_balance: dict,
+    min_usd: float = 10.0,
+    watchlist_coins: set[str] | None = None,
+) -> list[dict]:
+    """Crypto positions worth >= min_usd, optionally restricted to the bot's
+    traded watchlist.
+
+    H-3 fix (audit 2026-06-10 / I-2): on Binance testnet the faucet hands out
+    large balances of non-watchlist coins (SHIB, PEPE, FLOKI, fiat residue),
+    so the >= $10 value filter alone left ~19 dust positions counting toward
+    the max_open_positions cap — pushing the book to 20/7 and hard-blocking
+    every entry indefinitely (nothing closes, so it never drains). Restricting
+    to the watchlist mirrors push_bybit_balance.py's filter so the bot's cap
+    gate and the dashboard agree on the position count.
+
+    `watchlist_coins` is a set of upper-case base coins (e.g. {"BTC","ETH"}).
+    None or empty = don't apply the watchlist filter (value filter only) so we
+    never silently drop real positions when the watchlist can't be resolved.
+    """
+    sig = [
         p for p in (crypto_balance.get("positions") or [])
         if float(p.get("value_usd") or 0) >= min_usd
     ]
+    if watchlist_coins:
+        sig = [
+            p for p in sig
+            if str(p.get("currency", "")).upper() in watchlist_coins
+        ]
+    return sig
+
+
+def _watchlist_base_coins(watchlist_symbols: list[str]) -> set[str]:
+    """Base coins (upper-case) of any '*/USDT'-style pairs in the watchlist."""
+    return {
+        s.split("/")[0].upper()
+        for s in (watchlist_symbols or [])
+        if isinstance(s, str) and "/" in s
+    }
 
 
 def _symbols_at_daily_buy_cap(
@@ -286,22 +334,38 @@ def _symbols_at_daily_buy_cap(
     return {sym for sym, n in counts.items() if n >= cap}
 
 
-def _augment_account_with_combined_positions(account: dict, crypto_balance: dict) -> dict:
+def _augment_account_with_combined_positions(
+    account: dict,
+    crypto_balance: dict,
+    watchlist_coins: set[str] | None = None,
+) -> dict:
     """
     Mutate `account` so `open_positions` is the venue-aggregate (equity +
-    non-dust crypto) and the per-venue breakdowns are exposed.
+    watchlist crypto) and the per-venue breakdowns are exposed.
 
     H-3 fix (audit 2026-05-26): the executor's max_open_positions gate was
     seeing equity-only counts, so equity=3 + crypto=4 read as "3/5 used" and
     the bot could exceed the hard cap of 5 with crypto positions. Combining
     here means every downstream consumer (decision agent prompt, executor
     gate) sees the same number.
+
+    H-3 fix (audit 2026-06-10 / I-2): `watchlist_coins` restricts the crypto
+    count to traded symbols, so Binance-testnet faucet dust no longer consumes
+    cap. Both the raw and filtered counts are logged so under-counting is
+    diagnosable (I-2 risk mitigation).
     """
     equity_count = int(account.get("open_positions") or 0)
-    crypto_count = len(_significant_crypto_positions(crypto_balance))
+    crypto_count = len(_significant_crypto_positions(crypto_balance, watchlist_coins=watchlist_coins))
+    raw_crypto_count = len(_significant_crypto_positions(crypto_balance))
     account["equity_positions"] = equity_count
     account["crypto_positions"] = crypto_count
+    account["crypto_positions_raw"] = raw_crypto_count
     account["open_positions"] = equity_count + crypto_count
+    if watchlist_coins and raw_crypto_count > crypto_count:
+        logger.info(
+            f"Position counter: filtered {raw_crypto_count - crypto_count} "
+            f"non-watchlist crypto position(s) (kept {crypto_count} of {raw_crypto_count})"
+        )
     return account
 
 
@@ -335,7 +399,11 @@ def _compute_held_symbols(
     if crypto_pairs:
         if crypto_balance is None:
             crypto_balance = _fetch_crypto_balance()
-        significant = _significant_crypto_positions(crypto_balance)
+        # held = watchlist coins we actually hold, so restrict to the watchlist
+        # here too (matches the H-3 position-count filter).
+        significant = _significant_crypto_positions(
+            crypto_balance, watchlist_coins=_watchlist_base_coins(watchlist_symbols)
+        )
         held_coins = {str(p.get("currency", "")).upper() for p in significant}
         for pair in crypto_pairs:
             if pair.split("/")[0].upper() in held_coins:
@@ -632,7 +700,8 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
     # max_open_positions gate [H-3]. Both audit 2026-05-26.
     _watchlist_symbols = [s.get("symbol") for s in (market_snapshot.get("watchlist") or []) if s.get("symbol")]
     _crypto_bal = _fetch_crypto_balance()
-    _augment_account_with_combined_positions(account, _crypto_bal)  # H-3
+    _wl_coins = _watchlist_base_coins(_watchlist_symbols)  # H-3 / I-2
+    _augment_account_with_combined_positions(account, _crypto_bal, watchlist_coins=_wl_coins)  # H-3
     _held = _compute_held_symbols(account, _watchlist_symbols, crypto_balance=_crypto_bal)  # H-2
     _throttled = _symbols_at_daily_buy_cap()  # M-2 — symbols that hit the daily cap
     if _held:

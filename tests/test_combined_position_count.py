@@ -101,3 +101,52 @@ def test_augment_handles_none_open_positions():
     assert out["open_positions"] == 0
     assert out["equity_positions"] == 0
     assert out["crypto_positions"] == 0
+
+
+# ── H-3 / I-2: watchlist-aware position count ────────────────────────────────
+
+def test_watchlist_base_coins_extracts_pairs():
+    assert main._watchlist_base_coins(["BTC/USDT", "ETH/USDT", "AAPL"]) == {"BTC", "ETH"}
+    assert main._watchlist_base_coins([]) == set()
+    assert main._watchlist_base_coins(None) == set()
+
+
+def test_significant_crypto_positions_watchlist_filter():
+    """Faucet coins above $10 but NOT in the watchlist must be excluded —
+    this is the 20/7 cap pile-up from audit 2026-06-10 (19 dust positions
+    each worth >$10 on testnet)."""
+    bal = {"positions": [
+        {"currency": "BTC", "value_usd": 50000.0},
+        {"currency": "ETH", "value_usd": 3000.0},
+        {"currency": "SHIB", "value_usd": 1500.0},   # faucet, >$10, NOT watchlist
+        {"currency": "PEPE", "value_usd": 900.0},     # faucet, >$10, NOT watchlist
+    ]}
+    result = main._significant_crypto_positions(bal, watchlist_coins={"BTC", "ETH"})
+    assert sorted(p["currency"] for p in result) == ["BTC", "ETH"]
+
+
+def test_significant_crypto_positions_empty_watchlist_no_filter():
+    """Empty/None watchlist must NOT drop positions (avoid under-counting when
+    the watchlist can't be resolved)."""
+    bal = {"positions": [{"currency": "BTC", "value_usd": 50000.0}]}
+    assert len(main._significant_crypto_positions(bal, watchlist_coins=None)) == 1
+    assert len(main._significant_crypto_positions(bal, watchlist_coins=set())) == 1
+
+
+def test_augment_watchlist_filter_drops_dust_from_cap():
+    """The exact audit 2026-06-10 scenario: 1 equity + 2 watchlist crypto +
+    many faucet coins must count as 3, not 20."""
+    account = {"open_positions": 1}
+    crypto_bal = {"positions": [
+        {"currency": "BTC", "value_usd": 50000.0},
+        {"currency": "ETH", "value_usd": 3000.0},
+        {"currency": "SHIB", "value_usd": 1500.0},
+        {"currency": "PEPE", "value_usd": 900.0},
+        {"currency": "FLOKI", "value_usd": 500.0},
+    ]}
+    out = main._augment_account_with_combined_positions(
+        account, crypto_bal, watchlist_coins={"BTC", "ETH"}
+    )
+    assert out["crypto_positions"] == 2          # watchlist only
+    assert out["crypto_positions_raw"] == 5      # raw (diagnostic)
+    assert out["open_positions"] == 3            # 1 equity + 2 crypto, NOT 6

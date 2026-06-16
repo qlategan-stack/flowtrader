@@ -128,6 +128,21 @@ def _is_crypto(symbol: str) -> bool:
     return "/" in str(symbol)
 
 
+def _normalize_alpaca_status(raw) -> str:
+    """Lower-cased Alpaca order status with any enum prefix stripped.
+
+    Alpaca's OrderStatus enum str()s as "OrderStatus.FILLED" in some SDK
+    versions and plain "filled" in others. Strip the prefix and lower-case so
+    both forms match the executor's status_map and terminal-state set. (Live
+    2026-06-16: an MSFT BUY filled but str(order.status) == "OrderStatus.FILLED"
+    fell through to the SUBMITTED default and polled the full 30s window.)
+    """
+    s = str(raw).strip()
+    if "." in s:
+        s = s.rsplit(".", 1)[-1]
+    return s.lower()
+
+
 def _get_crypto_client():
     """Return BinanceFetcher if BINANCE_API_KEY is set, else BybitFetcher."""
     if os.getenv("BINANCE_API_KEY"):
@@ -163,6 +178,11 @@ class OrderExecutor:
         self.paper = os.getenv("PAPER_TRADING", "true").lower() == "true"
         self.alpaca_key = os.getenv("ALPACA_API_KEY")
         self.alpaca_secret = os.getenv("ALPACA_SECRET_KEY")
+        # H-2 (audit 2026-06-10): how long to poll for an order to reach a
+        # terminal state before journalling it as SUBMITTED (still live on the
+        # exchange) rather than mislabelling it CANCELLED. 30s gives slow
+        # paper fills room without blocking the 30-min cycle.
+        self._exit_poll_secs = int(os.getenv("ORDER_POLL_SECS", "30"))
 
         self.profile_name, self.profile = load_risk_profile()
         logger.info(
@@ -336,18 +356,23 @@ class OrderExecutor:
         quantity = min(quantity, int(max_order_value / entry_price))
         return max(1, quantity)
 
-    def _wait_for_terminal_status(self, order_id: str, max_wait_secs: int = 10):
+    def _wait_for_terminal_status(self, order_id: str, max_wait_secs: int | None = None):
         """
         Poll Alpaca until the order reaches a terminal state or timeout.
-        Market orders on paper fill in < 1 s; 10 s is a generous safety margin.
+        Market orders on paper fill in < 1 s; the default window (self._exit_poll_secs,
+        30 s) is a generous safety margin for slow fills.
         Returns the final order object (possibly still non-terminal on timeout).
         """
         import time
-        terminal = {"filled", "partially_filled", "cancelled", "expired", "replaced", "rejected"}
+        if max_wait_secs is None:
+            max_wait_secs = self._exit_poll_secs
+        terminal = {"filled", "partially_filled", "cancelled", "canceled", "expired", "replaced", "rejected"}
         deadline = time.monotonic() + max_wait_secs
         while time.monotonic() < deadline:
             order = self.trading_client.get_order_by_id(order_id)
-            if str(order.status) in terminal:
+            # Normalise "OrderStatus.FILLED" -> "filled" so terminal detection
+            # works (else we poll the full window on an already-filled order).
+            if _normalize_alpaca_status(order.status) in terminal:
                 return order
             time.sleep(0.5)
         logger.warning(f"Order {order_id} did not reach terminal state within {max_wait_secs}s — journalling as-is")
@@ -586,6 +611,45 @@ class OrderExecutor:
                 rejection["venue_account"] = crypto_bal
             return rejection
 
+        # ── M-6 (audit 2026-06-10): pre-submit sizing assertion ───────────────
+        # Final hard guard: no order — entry OR exit — may exceed the absolute
+        # position ceiling. validate_order's check #3 already enforces this for
+        # entries, but exits skip entry-only checks and a future sizing bug
+        # could slip an oversized BUY past clamping. This catches the May 20-25
+        # regression (ETH notional ~$145k on a ~$99k account) at the last
+        # possible moment, before the order ever leaves the bot. Exits are
+        # allowed to exceed the cap ONLY when closing an existing oversized
+        # position (we never want to be unable to flatten), so the assertion is
+        # entry-only but logs exits that breach for visibility.
+        notional = quantity * entry_price
+        if account_value > 0:
+            notional_pct = notional / account_value
+            ceiling = min(p["max_position_pct"], HARD_MAX_POSITION_PCT) + POSITION_PCT_EPS
+            if notional_pct > ceiling:
+                if not is_exit:
+                    logger.error(
+                        f"SIZING ASSERTION FAILED — {action} {symbol} notional "
+                        f"${notional:,.2f} = {notional_pct:.1%} of ${account_value:,.0f} "
+                        f"exceeds ceiling {ceiling:.0%}. Order blocked."
+                    )
+                    rejection = {
+                        "status": "CANCELLED",
+                        "reason": (
+                            f"Pre-submit sizing assertion: notional {notional_pct:.1%} "
+                            f"exceeds {ceiling:.0%} cap (computed ${notional:,.2f})"
+                        ),
+                        "symbol": symbol,
+                        "attempted_quantity": quantity,
+                    }
+                    if is_crypto:
+                        rejection["venue_account"] = crypto_bal
+                    return rejection
+                else:
+                    logger.warning(
+                        f"Exit {symbol} notional {notional_pct:.1%} exceeds normal cap "
+                        f"(closing an oversized position) — allowed."
+                    )
+
         # ── Place crypto order (Binance if configured, else Bybit) ───────────
         if is_crypto:
             result = crypto_client.place_order(
@@ -648,20 +712,56 @@ class OrderExecutor:
             # journal to never record a FILLED row (C-4 in audit 2026-05-20).
             order = self._wait_for_terminal_status(str(order.id))
 
-            final_status = str(order.status)
+            # Alpaca's OrderStatus enum str()s as "OrderStatus.FILLED", not
+            # "filled" — strip the enum prefix so the status_map below matches.
+            # Without this a genuine fill fell through to the SUBMITTED default
+            # (observed live 2026-06-16: MSFT BUY filled but journalled SUBMITTED).
+            final_status = _normalize_alpaca_status(order.status)
             filled_qty = float(order.filled_qty or 0)
             filled_avg = float(order.filled_avg_price or 0) if order.filled_avg_price else entry_price
 
-            # Map Alpaca status strings to spec-compliant enum {FILLED, SKIPPED, PARTIAL, CANCELLED}
+            # Map Alpaca status strings to spec-compliant enum {FILLED, SKIPPED, PARTIAL, CANCELLED, SUBMITTED}
+            #
+            # H-2 fix (audit 2026-06-10): the old default mapped EVERY unknown
+            # status — including the non-terminal "new"/"accepted"/"pending_new"
+            # an order sits in when _wait_for_terminal_status times out — to
+            # CANCELLED. That mislabelled still-pending exits as cancelled, so
+            # the bot thought its SELLs failed when they were merely slow to
+            # fill. Positions then never drained (the 20/7 pile-up) and there
+            # were zero closed round-trips for the whole audit window.
+            #
+            # Now: terminal non-fill states map to CANCELLED; non-terminal
+            # states map to SUBMITTED (the order is live on the exchange and
+            # will be reconciled), so they are NOT counted as a failed exit.
             status_map = {
                 "filled": "FILLED",
                 "partially_filled": "PARTIAL",
                 "rejected": "CANCELLED",
                 "cancelled": "CANCELLED",
+                "canceled": "CANCELLED",      # Alpaca uses single-l spelling in some SDK versions
                 "expired": "CANCELLED",
                 "replaced": "CANCELLED",
+                "new": "SUBMITTED",
+                "accepted": "SUBMITTED",
+                "pending_new": "SUBMITTED",
+                "accepted_for_bidding": "SUBMITTED",
+                "held": "SUBMITTED",
             }
-            mapped_status = status_map.get(final_status.lower(), "CANCELLED")
+            mapped_status = status_map.get(final_status.lower(), "SUBMITTED")
+
+            # I-1 fix: always capture a human-readable reason so a CANCELLED /
+            # SUBMITTED exit is diagnosable from trades.jsonl alone, instead of
+            # the null rejection_reason every cancelled SELL carried in the audit.
+            if mapped_status == "CANCELLED":
+                reason = f"Alpaca order {final_status} (no fill)"
+            elif mapped_status == "SUBMITTED":
+                reason = f"Alpaca order still {final_status} after {self._exit_poll_secs}s poll — live on exchange, awaiting reconcile"
+                logger.warning(
+                    f"{action} {symbol} did not fill within poll window "
+                    f"(status={final_status}) — journalled as SUBMITTED, not CANCELLED"
+                )
+            else:
+                reason = "OK"
 
             return {
                 "status": mapped_status,
@@ -673,6 +773,7 @@ class OrderExecutor:
                 "stop_loss": stop_loss,
                 "take_profit": take_profit,
                 "order_status": final_status,
+                "reason": reason,
                 "paper_trade": self.paper
             }
 
