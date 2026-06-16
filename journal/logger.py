@@ -27,6 +27,37 @@ _CANONICAL_STATUSES = {
 }
 
 
+def _coalesce(*values):
+    """First value that is not None and not <= 0 for numerics, else first
+    non-None, else None. Used so the journal prefers the executor's actual
+    fill quantity/price over the decision's intent, but doesn't fall through
+    to a 0/None placeholder when the executor omitted the field."""
+    for v in values:
+        if v is None:
+            continue
+        try:
+            if float(v) > 0:
+                return v
+        except (TypeError, ValueError):
+            return v
+    # nothing positive — return first non-None so we don't lose a legit 0
+    for v in values:
+        if v is not None:
+            return v
+    return None
+
+
+def _raw_open_positions(account: dict):
+    """Raw position count incl. non-watchlist dust, for the H-5 audit field.
+    Uses the equity + raw-crypto breakdown when main.py has augmented the
+    account (crypto_positions_raw present); otherwise falls back to whatever
+    open_positions holds (un-augmented exit-path rows)."""
+    raw_crypto = account.get("crypto_positions_raw")
+    if raw_crypto is None:
+        return account.get("open_positions")
+    return int(account.get("equity_positions", 0) or 0) + int(raw_crypto or 0)
+
+
 def _normalize_execution_status(raw) -> str:
     """
     Coerce any status representation to the canonical uppercase token.
@@ -88,11 +119,20 @@ class TradeJournal:
             "signals_fired": decision.get("signals_fired", []),
             "confidence": decision.get("confidence", "LOW"),
 
-            # Trade parameters
-            "entry_price": decision.get("entry_price"),
-            "stop_loss": decision.get("stop_loss"),
-            "take_profit": decision.get("take_profit"),
-            "quantity": decision.get("quantity"),
+            # Trade parameters.
+            # H-1 fix (audit 2026-06-16): quantity/entry_price must reflect what
+            # the EXECUTOR actually placed, not the AI decision's narrative number
+            # (Claude said "3 shares" but the executor sized 25 to fit the 10% cap;
+            # the journal recorded 3, making trades.jsonl an unreliable audit
+            # trail). Prefer the execution_result's values when an order was
+            # placed; fall back to the decision's intent otherwise (SKIP/reject).
+            # The decision's original intent is preserved in intended_* below.
+            "entry_price": _coalesce(execution_result.get("entry_price"), decision.get("entry_price")),
+            "stop_loss": _coalesce(execution_result.get("stop_loss"), decision.get("stop_loss")),
+            "take_profit": _coalesce(execution_result.get("take_profit"), decision.get("take_profit")),
+            "quantity": _coalesce(execution_result.get("quantity"), decision.get("quantity")),
+            "intended_quantity": decision.get("quantity"),
+            "intended_entry_price": decision.get("entry_price"),
             "risk_reward": self._calc_rr(decision),
 
             # Execution result — normalized to the canonical vocabulary
@@ -104,9 +144,18 @@ class TradeJournal:
             # set by main._classify_skip. None on non-SKIP rows.
             "skip_kind": execution_result.get("skip_kind"),
 
-            # Account state at time of decision
+            # Account state at time of decision.
+            # H-5 fix (audit 2026-06-16): open_positions used to be ambiguous —
+            # exit-path rows (logged before the combined-count augment) carried
+            # the raw exchange count (20 incl. testnet dust) while entry rows
+            # carried the watchlist-filtered count (1-2). Always record both the
+            # canonical (watchlist-filtered) count AND the raw count so the field
+            # is unambiguous regardless of where in the cycle the row is written.
             "account_value": account.get("portfolio_value"),
             "open_positions": account.get("open_positions"),
+            "open_positions_raw": _raw_open_positions(account),
+            "equity_positions": account.get("equity_positions"),
+            "crypto_positions": account.get("crypto_positions"),
             "day_pl_at_decision": account.get("day_pl"),
 
             # Claude's reasoning (full text)

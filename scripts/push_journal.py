@@ -35,6 +35,39 @@ def _git(*args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _ensure_repo_healthy() -> bool:
+    """Detect and auto-repair a broken refs/heads/main (H-2 audit 2026-06-16).
+
+    A failed/interrupted push can leave refs/heads/main pointing at an invalid
+    object ("cannot lock ref 'HEAD': … reference broken"), which silently fails
+    every subsequent commit until repaired by hand. This detects that state and
+    re-points main at origin/main (fetched), the same manual repair done on
+    2026-06-16. Returns True if the repo is healthy (or was repaired), False if
+    it could not be fixed (caller should skip the push and log loudly).
+    """
+    if _git("rev-parse", "--verify", "HEAD").returncode == 0:
+        return True  # HEAD resolves — healthy
+    print("[journal-push] WARNING: HEAD/main ref appears broken — attempting auto-repair")
+    _git("fetch", "origin")
+    # Re-point main at the fetched origin/main.
+    origin = _git("rev-parse", "--verify", "origin/main")
+    if origin.returncode != 0:
+        print("[journal-push] auto-repair FAILED: cannot resolve origin/main")
+        return False
+    sha = origin.stdout.strip()
+    fixed = _git("update-ref", "refs/heads/main", sha)
+    if fixed.returncode != 0:
+        # update-ref can itself fail to lock a zeroed ref; write it directly.
+        try:
+            (DASHBOARD_ROOT / ".git" / "refs" / "heads" / "main").write_text(sha + "\n", encoding="utf-8")
+        except Exception as e:
+            print(f"[journal-push] auto-repair FAILED: {e}")
+            return False
+    ok = _git("rev-parse", "--verify", "HEAD").returncode == 0
+    print(f"[journal-push] auto-repair {'succeeded' if ok else 'FAILED'} (main -> {sha[:8]})")
+    return ok
+
+
 def _ensure_gh_user() -> bool:
     """Switch gh CLI to qlategan-stack so git push uses the right credentials."""
     r = subprocess.run(
@@ -84,6 +117,12 @@ def main() -> int:
     if not BOT_JOURNAL.exists():
         print("[journal-push] no bot journal found, skipping")
         return 0
+
+    # H-2: heal a broken main ref before doing any git work, so a prior failed
+    # push can't silently freeze the dashboard for days.
+    if not _ensure_repo_healthy():
+        print("[journal-push] repo unhealthy and could not auto-repair — skipping push this cycle")
+        return 1
 
     bot_entries  = _load_jsonl(BOT_JOURNAL)
     dash_entries = _load_jsonl(DASH_JOURNAL)
