@@ -39,6 +39,16 @@ from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+# Load .env so the Anthropic key resolves the same way as main.py/decision.py
+# when run locally. In CI the key is injected as an env var (no .env present),
+# which load_dotenv leaves untouched. Without this, removing an ambient
+# ANTHROPIC_API_KEY breaks local lesson generation (observed 2026-06-16: 401s).
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except Exception:
+    pass
+
 logger = logging.getLogger("trade-analysis")
 
 CLAUDE_MODEL = "claude-sonnet-4-6"

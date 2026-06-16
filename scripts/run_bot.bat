@@ -15,5 +15,14 @@ REM never falls back to high_safety defaults if the dashboard repo is unavailabl
 copy /Y "%USERPROFILE%\OneDrive\1.Projects\Flowtrader\flowtrader-dashboard\journal\risk_profile.json" "journal\risk_profile.json" >> "scripts\run_bot.log" 2>&1
 
 python main.py %MODE% >> "scripts\run_bot.log" 2>&1
+
+REM Reconcile any orders left non-terminal (SUBMITTED) in the journal so they
+REM backfill to FILLED/CANCELLED before the journal is pushed (audit 2026-06-10).
+REM Crypto reconciler already existed; the Alpaca/equity one was never scheduled,
+REM so equity fills journalled as SUBMITTED (e.g. the MSFT enum-leak fill) never
+REM self-corrected. Both run every cycle now; both are read-only against the broker.
+python scripts\reconcile_crypto_orders.py >> "scripts\run_bot.log" 2>&1
+python scripts\reconcile_alpaca_orders.py >> "scripts\run_bot.log" 2>&1
+
 python scripts\push_journal.py >> "scripts\run_bot.log" 2>&1
 python "%USERPROFILE%\OneDrive\1.Projects\Flowtrader\flowtrader-dashboard\scripts\build_positions_dashboard.py" >> "scripts\run_bot.log" 2>&1

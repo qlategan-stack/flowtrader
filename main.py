@@ -125,6 +125,18 @@ _ALREADY_HELD_COOLDOWN_CYCLES = int(os.getenv("ALREADY_HELD_COOLDOWN_CYCLES", "3
 _MAX_BUYS_PER_SYMBOL_PER_DAY = int(os.getenv("MAX_BUYS_PER_SYMBOL_PER_DAY", "2"))
 _TRADES_JOURNAL_FILE = Path("journal/trades.jsonl")
 
+# M-7 fix (audit 2026-06-10): ETH/USDT was 50% of all crypto fills over 30 days,
+# over the 40% single-symbol concentration threshold. The per-day cap (above)
+# limits same-day re-firing but not a symbol slowly dominating the book over
+# weeks. This rolling guard suppresses a symbol whose share of fills over the
+# trailing window already meets/exceeds the cap, so new entries diversify until
+# its share decays. Window and cap are env-tunable; cap=1.0 disables it.
+_CONCENTRATION_WINDOW_DAYS = int(os.getenv("CONCENTRATION_WINDOW_DAYS", "30"))
+_MAX_SYMBOL_FILL_SHARE = float(os.getenv("MAX_SYMBOL_FILL_SHARE", "0.40"))
+# Don't apply the share cap until enough fills exist for the ratio to be
+# meaningful (1/3 is "100%" and would lock out a symbol forever).
+_CONCENTRATION_MIN_FILLS = int(os.getenv("CONCENTRATION_MIN_FILLS", "8"))
+
 # L-4 (audit 2026-05-26): structured SKIP categories so the journal supports
 # machine analysis instead of forcing pattern-matching on free-text reasoning.
 # Order matters — _classify_skip checks the most specific kinds first.
@@ -332,6 +344,137 @@ def _symbols_at_daily_buy_cap(
         logger.warning(f"Per-symbol throttle check failed: {e}")
         return set()
     return {sym for sym, n in counts.items() if n >= cap}
+
+
+def _symbols_over_concentration_cap(
+    window_days: int = _CONCENTRATION_WINDOW_DAYS,
+    max_share: float = _MAX_SYMBOL_FILL_SHARE,
+    min_fills: int = _CONCENTRATION_MIN_FILLS,
+    journal_file: Path | None = None,
+    today_est: str | None = None,
+) -> set[str]:
+    """
+    Return symbols whose share of FILLED entries over the trailing
+    `window_days` already meets/exceeds `max_share` — so a single symbol can't
+    dominate the book over weeks (M-7 audit 2026-06-10: ETH = 50% of crypto
+    fills, over the 40% threshold).
+
+    Only FILLED BUY rows count (a real position, not an attempt). The cap is a
+    no-op until at least `min_fills` total fills exist, so a tiny sample doesn't
+    lock out a symbol on 1/1 = 100%. `max_share >= 1.0` disables the guard.
+    """
+    if max_share >= 1.0:
+        return set()
+    journal = journal_file or _TRADES_JOURNAL_FILE
+    if not journal.exists():
+        return set()
+    from datetime import datetime as _dt, timedelta as _td
+    from zoneinfo import ZoneInfo
+    _tz = ZoneInfo("America/New_York")
+    if today_est is None:
+        today_est = _dt.now(_tz).strftime("%Y-%m-%d")
+    try:
+        cutoff = (_dt.strptime(today_est, "%Y-%m-%d") - _td(days=window_days)).strftime("%Y-%m-%d")
+    except ValueError:
+        return set()
+
+    counts: dict[str, int] = {}
+    total = 0
+    try:
+        for line in journal.read_text(encoding="utf-8-sig").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            d = row.get("date")
+            if not d or d < cutoff:
+                continue
+            if (row.get("action") or "").upper() != "BUY":
+                continue
+            if (row.get("execution_status") or "").upper() != "FILLED":
+                continue
+            sym = row.get("symbol")
+            if sym:
+                counts[sym] = counts.get(sym, 0) + 1
+                total += 1
+    except Exception as e:
+        logger.warning(f"Concentration check failed: {e}")
+        return set()
+
+    if total < min_fills:
+        return set()
+    return {sym for sym, n in counts.items() if (n / total) >= max_share}
+
+
+def _asset_class(symbol: str | None) -> str:
+    """Coarse asset-class bucket for a symbol. Crypto = contains '/'."""
+    if not symbol:
+        return "unknown"
+    if "/" in symbol:
+        return "crypto"
+    # Treat the config's commodity/bond ETFs as their own bucket so M-2's
+    # equity-vs-crypto read isn't muddied by GLD/SLV/USO/TLT.
+    if symbol.upper() in {"GLD", "SLV", "USO", "TLT"}:
+        return "commodity"
+    return "equity"
+
+
+def _per_class_decision_split(
+    window_days: int = 7,
+    journal_file: Path | None = None,
+    today_est: str | None = None,
+) -> dict[str, dict[str, int]]:
+    """
+    BUY-vs-SKIP counts per asset class over the trailing window, for M-2
+    visibility (audit 2026-06-10: equities 6% BUY vs crypto 75% — but nothing
+    logged the split, so the imbalance was invisible between audits).
+
+    Returns {class: {"BUY": n, "SKIP": n, "buy_pct": int}}.
+    """
+    journal = journal_file or _TRADES_JOURNAL_FILE
+    if not journal.exists():
+        return {}
+    from datetime import datetime as _dt, timedelta as _td
+    from zoneinfo import ZoneInfo
+    if today_est is None:
+        today_est = _dt.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    try:
+        cutoff = (_dt.strptime(today_est, "%Y-%m-%d") - _td(days=window_days)).strftime("%Y-%m-%d")
+    except ValueError:
+        return {}
+
+    out: dict[str, dict[str, int]] = {}
+    try:
+        for line in journal.read_text(encoding="utf-8-sig").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            d = row.get("date")
+            if not d or d < cutoff:
+                continue
+            action = (row.get("action") or "").upper()
+            if action not in ("BUY", "SKIP"):
+                continue
+            # For SKIPs the symbol is null; bucket by the top setup symbol so
+            # the class attribution still works.
+            sym = row.get("symbol") or row.get("top_setup_symbol")
+            cls = _asset_class(sym)
+            bucket = out.setdefault(cls, {"BUY": 0, "SKIP": 0})
+            bucket[action] += 1
+    except Exception as e:
+        logger.warning(f"Per-class decision split failed: {e}")
+        return {}
+    for bucket in out.values():
+        tot = bucket["BUY"] + bucket["SKIP"]
+        bucket["buy_pct"] = round(100 * bucket["BUY"] / tot) if tot else 0
+    return out
 
 
 def _augment_account_with_combined_positions(
@@ -704,6 +847,7 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
     _augment_account_with_combined_positions(account, _crypto_bal, watchlist_coins=_wl_coins)  # H-3
     _held = _compute_held_symbols(account, _watchlist_symbols, crypto_balance=_crypto_bal)  # H-2
     _throttled = _symbols_at_daily_buy_cap()  # M-2 — symbols that hit the daily cap
+    _concentrated = _symbols_over_concentration_cap()  # M-7 — symbols dominating recent fills
     if _held:
         logger.info(f"Already-holding filter: suppressing {sorted(_held)} from this cycle (live positions)")
     if _throttled:
@@ -711,12 +855,17 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
             f"Per-symbol daily throttle: suppressing {sorted(_throttled)} "
             f"(≥{_MAX_BUYS_PER_SYMBOL_PER_DAY} BUYs today)"
         )
+    if _concentrated:
+        logger.info(
+            f"Concentration cap: suppressing {sorted(_concentrated)} "
+            f"(≥{_MAX_SYMBOL_FILL_SHARE:.0%} of fills in last {_CONCENTRATION_WINDOW_DAYS}d)"
+        )
     if account.get("crypto_positions"):
         logger.info(
             f"Combined position count: {account['open_positions']} "
             f"(equity={account['equity_positions']}, crypto={account['crypto_positions']})"
         )
-    _suppress = _held | _throttled
+    _suppress = _held | _throttled | _concentrated
     _combined_state = {**_cooldown_state, **{sym: 1 for sym in _suppress}}
     market_snapshot_filtered = _apply_cooldown_filter(market_snapshot, _combined_state)
     logger.info("Sending to Claude for analysis...")
@@ -836,6 +985,21 @@ def run_trading_session(config: dict, mode: str = "full") -> dict:
         f"score={result.get('signal_score', 0)} "
         f"acct=${result.get('account_value', 0):,.0f}"
     )
+
+    # M-2 visibility (audit 2026-06-10): log the 7-day BUY-vs-SKIP split per
+    # asset class so the equity-vs-crypto imbalance is trackable cycle-to-cycle
+    # instead of only surfacing in the periodic audit.
+    try:
+        split = _per_class_decision_split()
+        if split:
+            parts = [
+                f"{cls}={b['BUY']}B/{b['SKIP']}S ({b['buy_pct']}%)"
+                for cls, b in sorted(split.items())
+            ]
+            logger.info(f"7d decision split by class: {' · '.join(parts)}")
+    except Exception as e:
+        logger.warning(f"Per-class split logging failed: {e}")
+
     return result
 
 
